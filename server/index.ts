@@ -52,6 +52,7 @@ import fcmRouter from "./fcm";
 import getuiRouter from "./getui";
 import apnsRouter from "./apns";
 import jpushRouter from "./jpush";
+import webPushRouter, { sendWebPush } from "./web-push";
 import cookieParser from "cookie-parser";
 import compression from "compression";
 import stickerRouter, { STICKER_STATIC_PREFIX, STICKER_FILES_DIR, ensureStickerStore } from "./sticker";
@@ -1403,6 +1404,14 @@ async function handleMessage(client: SignalClient, raw: string) {
                 }
                 }
               }
+
+              // 浏览器设备使用 Web Push 唤醒；payload 固定为 encrypted_message，绝不带正文。
+              await sendWebPush({
+                toUserId: peerId,
+                chatId: pChatId,
+                messageId: message.id,
+                senderId: client.userId,
+              }).catch((e: any) => console.error('[WebPush] 推送异常:', e));
             }
           } catch (err) {
             console.error('[PrivateChat] 发送失败:', err);
@@ -1639,6 +1648,7 @@ app.use("/api/home", homeRouter);
   app.use('/api/getui', getuiRouter);
   app.use('/api/apns', apnsRouter);
   app.use('/api/jpush', jpushRouter);
+  app.use('/api/web-push', webPushRouter);
 
   // ============ 贴纸 API ============
   // 注册 TGS 和 WebP 的正确 MIME 类型，确保浏览器能正确处理

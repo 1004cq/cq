@@ -11,7 +11,7 @@
  * 参考: https://docs.getui.com/getui/mobile/android/androidstudio/
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 
 // 动态导入，避免在 Web 环境中报错
@@ -66,6 +66,24 @@ async function registerFCMTokenOnServer(token: string): Promise<void> {
  * CID 由 Android 原生层（GetuiIntentService.onReceiveClientId）写入 SharedPreferences
  * 通过 Capacitor Preferences 插件读取
  */
+function urlBase64ToUint8Array(value: string): Uint8Array {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(char => char.charCodeAt(0)));
+}
+
+async function registerWebPushOnServer(subscription: PushSubscription): Promise<void> {
+  const token = localStorage.getItem('user_token');
+  if (!token) return;
+  const response = await fetch('/api/web-push/subscription', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ subscription: subscription.toJSON() }),
+  });
+  if (!response.ok) throw new Error(`Web Push 订阅保存失败: ${response.status}`);
+}
+
 async function registerGetuiCIDOnServer(cid: string): Promise<void> {
   const userToken = localStorage.getItem('user_token');
   if (!userToken) {
@@ -136,6 +154,7 @@ async function tryGetGetuiCID(): Promise<string | null> {
  * @param isLoggedIn 用户是否已登录
  */
 export function useFCM(isLoggedIn: boolean) {
+  const webPushCleanupRef = useRef<(() => void) | null>(null);
   /**
    * 初始化个推 CID 上报
    * 轮询等待 CID 就绪（SDK 初始化需要 1-3 秒）
@@ -154,6 +173,45 @@ export function useFCM(isLoggedIn: boolean) {
       }
     }
     console.log('[个推] CID 未就绪，将在下次登录时重试');
+  }, []);
+
+  const initWebPush = useCallback(async () => {
+    if (Capacitor.isNativePlatform()) return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+
+    try {
+      const keyResponse = await fetch('/api/web-push/public-key');
+      if (!keyResponse.ok) return;
+      const config = await keyResponse.json();
+      if (!config.enabled || !config.publicKey) return;
+
+      const permission = Notification.permission === 'default'
+        ? await Notification.requestPermission()
+        : Notification.permission;
+      if (permission !== 'granted') return;
+
+      const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      const subscription = await registration.pushManager.getSubscription()
+        || await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(config.publicKey),
+        });
+      await registerWebPushOnServer(subscription);
+
+      const handleWorkerMessage = (event: MessageEvent) => {
+        const data = event.data;
+        if (data?.type !== 'cqim:open-chat-from-notification') return;
+        window.dispatchEvent(new CustomEvent('cqim:open-chat-from-notification', {
+          detail: { chatId: data.chatId },
+        }));
+      };
+      navigator.serviceWorker.addEventListener('message', handleWorkerMessage);
+      webPushCleanupRef.current = () => {
+        navigator.serviceWorker.removeEventListener('message', handleWorkerMessage);
+      };
+    } catch (error) {
+      console.warn('[WebPush] 初始化跳过:', error);
+    }
   }, []);
 
   const initFCM = useCallback(async () => {
@@ -239,8 +297,11 @@ export function useFCM(isLoggedIn: boolean) {
     // 同时初始化 FCM 和个推 CID
     void initFCM();
     void initGetuiCID();
+    void initWebPush();
 
     return () => {
+      webPushCleanupRef.current?.();
+      webPushCleanupRef.current = null;
       // 清理监听器
       getPushNotifications().then((push) => {
         if (push) {
@@ -248,5 +309,5 @@ export function useFCM(isLoggedIn: boolean) {
         }
       });
     };
-  }, [isLoggedIn, initFCM, initGetuiCID]);
+  }, [isLoggedIn, initFCM, initGetuiCID, initWebPush]);
 }

@@ -11,6 +11,14 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { CURRENT_USER } from '@/lib/store';
+import { e2eeProxy } from '@/lib/e2ee/WorkerProxy';
+import {
+  loadGroupMessagesFromLocalDb,
+  persistGroupMessages,
+  loadSyncState,
+  updateSyncState,
+} from '@/lib/localdb';
 
 // ============ 类型定义 ============
 
@@ -36,6 +44,8 @@ export interface GroupMessage {
   mlsEpoch?: number;
   /** MLS 解密失败标记 */
   mlsDecryptFailed?: boolean;
+  /** 本地展示副本的解密状态 */
+  decryptionStatus?: 'decrypted' | 'ciphertext' | 'failed' | 'legacy';
 }
 
 interface UseGroupSyncOptions {
@@ -103,6 +113,118 @@ class MessageBatcher {
   }
 }
 
+function normalizeGroupMessage(raw: any): GroupMessage {
+  return {
+    id: raw.id || `gm-${raw.seq}`,
+    seq: Number(raw.seq || 0),
+    senderId: raw.senderId,
+    senderName: raw.senderName || raw.senderId,
+    senderAvatar: raw.senderAvatar,
+    msgType: raw.msgType || 'text',
+    content: raw.content || '',
+    replyToId: raw.replyToId,
+    extra: raw.extra,
+    timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : new Date(raw.createdAt || Date.now()).getTime(),
+    isRevoked: raw.isRevoked,
+    status: raw.status || 'delivered',
+  };
+}
+
+async function decryptGroupBatch(groupId: string, userId: string, rawMessages: any[]): Promise<GroupMessage[]> {
+  const normalized = rawMessages.map(normalizeGroupMessage);
+  const encrypted = normalized
+    .filter(message => !message.isRevoked && (message.msgType === 'mls_encrypted' || message.extra?.mlsEncrypted))
+    .map(message => {
+      try {
+        const envelope = JSON.parse(message.content);
+        if (!envelope?._mls) throw new Error('invalid_mls_envelope');
+        return {
+          id: message.id,
+          epoch: Number(envelope.epoch),
+          sender: Number(envelope.sender),
+          ct: envelope.ct,
+          gen: Number(envelope.gen),
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((message): message is { id: string; epoch: number; sender: number; ct: any; gen: number } => !!message);
+
+  const resultById = new Map<string, { success: boolean; plaintext?: string | null; error?: string }>();
+  if (encrypted.length > 0) {
+    if (e2eeProxy.isReady) {
+      const results = await e2eeProxy.mlsBatchDecrypt(groupId, encrypted);
+      for (const result of results) resultById.set(result.id, result);
+    } else {
+      const { MLSGroupManager } = await import('@/lib/e2ee/MLSGroupManager');
+      const manager = MLSGroupManager.shared();
+      if (!manager.isInitialized) await manager.initialize(userId);
+      for (const item of encrypted) {
+        try {
+          const plaintext = await manager.decryptMessage({
+            groupId,
+            epoch: item.epoch,
+            senderLeafIndex: item.sender,
+            ciphertext: item.ct,
+            generation: item.gen,
+          });
+          resultById.set(item.id, { success: true, plaintext });
+        } catch (error) {
+          resultById.set(item.id, { success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }
+  }
+
+  return normalized.map(message => {
+    if (message.isRevoked) return { ...message, content: '消息已撤回' };
+    const isMLS = message.msgType === 'mls_encrypted' || message.extra?.mlsEncrypted;
+    if (!isMLS) {
+      return message.msgType === 'system'
+        ? message
+        : { ...message, content: '⚠️ [不支持的旧明文群消息]', mlsDecryptFailed: true, decryptionStatus: 'legacy' };
+    }
+
+    const result = resultById.get(message.id);
+    if (!result?.success || !result.plaintext) {
+      return {
+        ...message,
+        content: '🔒 加密消息（无法解密，请等待群安全会话同步）',
+        mlsEncrypted: true,
+        mlsDecryptFailed: true,
+        mlsEpoch: message.extra?.mlsEpoch,
+        decryptionStatus: 'failed',
+      };
+    }
+
+    try {
+      const application = JSON.parse(result.plaintext);
+      const isStructured = application && typeof application === 'object' && 'content' in application;
+      return {
+        ...message,
+        content: isStructured ? String(application.content ?? '') : result.plaintext,
+        msgType: isStructured ? String(application.msgType || 'text') : 'text',
+        extra: isStructured ? application.extra : message.extra,
+        mlsEncrypted: true,
+        mlsEpoch: message.extra?.mlsEpoch,
+        mlsDecryptFailed: false,
+        decryptionStatus: 'decrypted',
+      };
+    } catch {
+      // 兼容早期只加密 content 的 MLS 消息；它仍然是密文解开后的内容。
+      return {
+        ...message,
+        content: result.plaintext,
+        msgType: 'text',
+        mlsEncrypted: true,
+        mlsDecryptFailed: false,
+        decryptionStatus: 'decrypted',
+      };
+    }
+  });
+}
+
 // ============ Hook 实现 ============
 
 export function useGroupSync(options: UseGroupSyncOptions) {
@@ -136,23 +258,28 @@ export function useGroupSync(options: UseGroupSyncOptions) {
   // ============ 消息合并处理 ============
 
   const handleBatchMessages = useCallback((batch: GroupMessage[]) => {
+    const existingSeqs = new Set(messagesRef.current.map(m => m.seq));
+    const newMsgs = batch.filter(m => !existingSeqs.has(m.seq));
+    if (newMsgs.length === 0) return;
+
+    // 本地只保存已经完成展示态转换的副本，不把业务明文发回服务器。
+    void persistGroupMessages(groupId, newMsgs, userId).catch(error => {
+      console.warn('[GroupSync] 本地群消息缓存失败:', error);
+    });
+
     setMessages(prev => {
-      // 去重（基于 seq）
-      const existingSeqs = new Set(prev.map(m => m.seq));
-      const newMsgs = batch.filter(m => !existingSeqs.has(m.seq));
-      if (newMsgs.length === 0) return prev;
+      const currentSeqs = new Set(prev.map(m => m.seq));
+      const unique = newMsgs.filter(m => !currentSeqs.has(m.seq));
+      if (unique.length === 0) return prev;
+      let merged = [...prev, ...unique].sort((a, b) => a.seq - b.seq);
 
-      let merged = [...prev, ...newMsgs].sort((a, b) => a.seq - b.seq);
-
-      // 内存淘汰：保留最新的 maxMessagesInMemory 条
       if (merged.length > maxMessagesInMemory) {
         merged = merged.slice(merged.length - maxMessagesInMemory);
-        setHasMore(true); // 淘汰了旧消息，可以继续加载
+        setHasMore(true);
       }
-
       return merged;
     });
-  }, [maxMessagesInMemory]);
+  }, [groupId, userId, maxMessagesInMemory]);
 
   // 初始化消息合并器
   useEffect(() => {
@@ -194,6 +321,7 @@ export function useGroupSync(options: UseGroupSyncOptions) {
   }, [groupId, userId, pageSize]);
 
   const lastSeqStorageKey = `cqim:last-seq:${groupId}:${userId}`;
+  const syncStateId = `group:${groupId}:${userId}`;
 
   const persistLastSeq = useCallback((seq: number) => {
     if (!groupId || !userId || seq <= 0) return;
@@ -202,31 +330,58 @@ export function useGroupSync(options: UseGroupSyncOptions) {
     } catch {
       // localStorage 不可用时不影响实时消息
     }
-  }, [groupId, userId, lastSeqStorageKey]);
+    void updateSyncState({
+      id: syncStateId,
+      scope: 'group',
+      ownerId: userId,
+      cursor: String(seq),
+      updatedAt: Date.now(),
+    }).catch(() => {});
+  }, [groupId, userId, lastSeqStorageKey, syncStateId]);
 
   // ============ 初始加载 ============
 
   const loadInitial = useCallback(async () => {
-    if (!enabled) return;
+    if (!enabled || !groupId || !userId) return;
     setLoading(true);
     try {
-      const msgs = await pullMessages();
-      setMessages(msgs);
-      let initialSeq = 0;
+      const [localMessages, syncState] = await Promise.all([
+        loadGroupMessagesFromLocalDb(groupId, userId),
+        loadSyncState(syncStateId),
+      ]);
+      const cached = localMessages as GroupMessage[];
+      if (cached.length > 0) {
+        const visibleCached = cached.slice(-maxMessagesInMemory);
+        setMessages(visibleCached);
+        messagesRef.current = visibleCached;
+      }
+
+      let initialSeq = Number(syncState?.cursor || 0);
       try {
-        initialSeq = Number(localStorage.getItem(lastSeqStorageKey) || 0);
+        initialSeq = Math.max(initialSeq, Number(localStorage.getItem(lastSeqStorageKey) || 0));
       } catch {
-        initialSeq = 0;
+        // 使用 IndexedDB cursor
       }
-      if (msgs.length > 0) {
-        initialSeq = Math.max(initialSeq, msgs[msgs.length - 1].seq);
-      }
+      if (cached.length > 0) initialSeq = Math.max(initialSeq, cached[cached.length - 1].seq);
       localSeqRef.current = initialSeq;
-      persistLastSeq(initialSeq);
+
+      // 只拉本地最后一条之后的新消息；无缓存时由服务端返回最近一页。
+      const pulled = await pullMessages(initialSeq > 0 ? initialSeq : undefined);
+      if (pulled.length > 0) {
+        const decrypted = await decryptGroupBatch(groupId, userId, pulled);
+        handleBatchMessages(decrypted);
+        const newestSeq = Math.max(initialSeq, ...decrypted.map(message => message.seq));
+        localSeqRef.current = newestSeq;
+        persistLastSeq(newestSeq);
+      } else if (initialSeq > 0) {
+        persistLastSeq(initialSeq);
+      }
+    } catch (error) {
+      console.error('[GroupSync] 初始化失败:', error);
     } finally {
       setLoading(false);
     }
-  }, [enabled, pullMessages, lastSeqStorageKey, persistLastSeq]);
+  }, [enabled, groupId, userId, pullMessages, syncStateId, lastSeqStorageKey, maxMessagesInMemory, handleBatchMessages, persistLastSeq]);
 
   // 首次进入加载
   useEffect(() => {
@@ -268,27 +423,19 @@ export function useGroupSync(options: UseGroupSyncOptions) {
       if (!resp.ok) throw new Error('拉取失败');
       const data = await resp.json();
 
-      const olderMsgs: GroupMessage[] = (data.messages || [])
-        .filter((m: any) => m.seq < (oldestSeq ?? Infinity))
-        .map((m: any) => ({
-          ...m,
-          timestamp: new Date(m.createdAt).getTime(),
-          status: 'delivered' as const,
-        }));
+      const olderRaw = (data.messages || [])
+        .filter((m: any) => m.seq < (oldestSeq ?? Infinity));
+      const olderMsgs = await decryptGroupBatch(groupId, userId, olderRaw);
 
       if (olderMsgs.length === 0) {
         setHasMore(false);
       } else {
-        setMessages(prev => {
-          const existingSeqs = new Set(prev.map(m => m.seq));
-          const newMsgs = olderMsgs.filter(m => !existingSeqs.has(m.seq));
-          return [...newMsgs, ...prev].sort((a, b) => a.seq - b.seq);
-        });
+        handleBatchMessages(olderMsgs);
       }
     } finally {
       setLoading(false);
     }
-  }, [loading, hasMore, groupId, userId, pageSize]);
+  }, [loading, hasMore, groupId, userId, pageSize, handleBatchMessages]);
 
   // ============ WebSocket 实时消息处理 ============
 
@@ -324,81 +471,24 @@ export function useGroupSync(options: UseGroupSyncOptions) {
 
           // 拉取响应
           if (data.payload?.pull) {
-            const pullMsgs: GroupMessage[] = (data.payload.messages || []).map((m: any) => ({
-              ...m,
-              timestamp: new Date(m.createdAt).getTime(),
-              status: 'delivered' as const,
-            }));
+            const pullMsgs = await decryptGroupBatch(groupId, userId, data.payload.messages || []);
             if (pullMsgs.length > 0) {
               handleBatchMessages(pullMsgs);
+              localSeqRef.current = Math.max(localSeqRef.current, ...pullMsgs.map(message => message.seq));
+              persistLastSeq(localSeqRef.current);
             }
             setHasMore(data.payload.hasMore);
             setLatestSeq(data.payload.latestSeq);
             return;
           }
 
-          // 普通推送消息
-          let msgContent = data.content;
-          let mlsEncrypted = false;
-          let mlsEpoch: number | undefined;
-          let mlsDecryptFailed = false;
-          let displayMsgType = data.msgType;
+          // 普通推送消息：统一交给 Worker 串行解密。
+          const [msg] = await decryptGroupBatch(groupId, userId, [data]);
+          if (!msg) return;
 
-          // MLS E2EE 解密：检查是否为加密消息
-          if (data.msgType === 'mls_encrypted' || (data.extra?.mlsEncrypted)) {
-            try {
-              const parsed = JSON.parse(data.content);
-              if (parsed._mls) {
-                const { MLSGroupManager } = await import('../lib/e2ee/MLSGroupManager');
-                const mlsManager = MLSGroupManager.shared();
-                if (mlsManager.isInitialized) {
-                  const decrypted = await mlsManager.decryptMessage({
-                    groupId,
-                    epoch: parsed.epoch,
-                    senderLeafIndex: parsed.sender,
-                    ciphertext: parsed.ct,
-                    generation: parsed.gen,
-                  });
-                  if (decrypted) {
-                    msgContent = decrypted;
-                    mlsEncrypted = true;
-                    mlsEpoch = parsed.epoch;
-                    displayMsgType = 'text'; // 解密后恢复原始类型
-                    console.log(`[MLS] 消息已解密, epoch=${parsed.epoch}`);
-                  }
-                }
-              }
-            } catch (err) {
-              console.warn('[MLS] 解密失败:', err);
-              msgContent = '🔒 加密消息（无法解密）';
-              mlsEncrypted = true;
-              mlsDecryptFailed = true;
-            }
-          }
-
-          const msg: GroupMessage = {
-            id: data.id || `gm-${data.seq}`,
-            seq: data.seq,
-            senderId: data.senderId,
-            senderName: data.senderName,
-            senderAvatar: data.senderAvatar,
-            msgType: displayMsgType,
-            content: msgContent,
-            replyToId: data.replyToId,
-            extra: data.extra,
-            timestamp: data.timestamp,
-            status: 'delivered',
-            mlsEncrypted,
-            mlsEpoch,
-            mlsDecryptFailed,
-          };
-
-          // 通过合并器处理
           batcherRef.current?.add(msg);
           localSeqRef.current = Math.max(localSeqRef.current, msg.seq);
           persistLastSeq(localSeqRef.current);
-
-          // 触发新消息回调（用于更新会话列表）
           onNewMessageRef.current?.(msg);
         }
 
@@ -414,69 +504,9 @@ export function useGroupSync(options: UseGroupSyncOptions) {
           }
           return;
         }
-        // 批量群消息推送：必须对 mls_encrypted 逐条解密，禁止明文透传
+        // 批量群消息推送：Worker 内按 seq 顺序解密，禁止明文透传。
         if (data.type === 'group_message_batch' && data.groupId === groupId) {
-          const batchMsgs: GroupMessage[] = await Promise.all((data.messages || []).map(async (m: any) => {
-            let msgContent = m.content;
-            let mlsEncrypted = false;
-            let mlsEpoch: number | undefined;
-            let mlsDecryptFailed = false;
-            let displayMsgType = m.msgType;
-
-            if (m.msgType === 'mls_encrypted' || (m.extra?.mlsEncrypted)) {
-              try {
-                const parsed = JSON.parse(m.content);
-                if (parsed._mls) {
-                  const { MLSGroupManager } = await import('../lib/e2ee/MLSGroupManager');
-                  const mlsManager = MLSGroupManager.shared();
-                  if (!mlsManager.isInitialized) {
-                    await mlsManager.initialize();
-                  }
-                  const decrypted = await mlsManager.decryptMessage({
-                    groupId,
-                    epoch: parsed.epoch,
-                    senderLeafIndex: parsed.sender,
-                    ciphertext: parsed.ct,
-                    generation: parsed.gen,
-                  });
-                  if (decrypted) {
-                    msgContent = decrypted;
-                    mlsEncrypted = true;
-                    mlsEpoch = parsed.epoch;
-                    displayMsgType = 'text';
-                  } else {
-                    throw new Error('MLS 解密返回空');
-                  }
-                }
-              } catch (err) {
-                console.warn('[MLS] 批量消息解密失败:', err);
-                msgContent = '🔒 加密消息（无法解密）';
-                mlsEncrypted = true;
-                mlsDecryptFailed = true;
-              }
-            } else if (m.msgType !== 'system') {
-              msgContent = '⚠️ [不支持的旧明文群消息]';
-              mlsDecryptFailed = true;
-            }
-
-            return {
-              id: m.id || `gm-${m.seq}`,
-              seq: m.seq,
-              senderId: m.senderId,
-              senderName: m.senderName,
-              senderAvatar: m.senderAvatar,
-              msgType: displayMsgType,
-              content: msgContent,
-              replyToId: m.replyToId,
-              extra: m.extra,
-              timestamp: m.timestamp,
-              status: 'delivered' as const,
-              mlsEncrypted,
-              mlsEpoch,
-              mlsDecryptFailed,
-            };
-          }));
-
+          const batchMsgs = await decryptGroupBatch(groupId, userId, data.messages || []);
           handleBatchMessages(batchMsgs);
           if (batchMsgs.length > 0) {
             localSeqRef.current = Math.max(
@@ -546,52 +576,54 @@ export function useGroupSync(options: UseGroupSyncOptions) {
     const senderName = CURRENT_USER.name || userId;
     const senderAvatar = CURRENT_USER.avatar || '';
 
-    // MLS E2EE 加密：尝试加密消息内容
+    // 系统事件可明文；所有业务消息必须把正文、类型和扩展字段整体封装进 MLS。
+    const isSystemMessage = msgType === 'system';
     let finalContent = content;
     let mlsEncrypted = false;
     let mlsEpoch: number | undefined;
-    let mlsPayload: any = null;
 
-    try {
-      const { MLSGroupManager } = await import('../lib/e2ee/MLSGroupManager');
-      const mlsManager = MLSGroupManager.shared();
-      if (!mlsManager.isInitialized) {
-        await mlsManager.initialize();
+    if (!isSystemMessage) {
+      try {
+        const applicationPayload = JSON.stringify({ content, msgType, extra });
+        let appMsg: any;
+        if (e2eeProxy.isReady) {
+          const hasMLS = await e2eeProxy.mlsHasState(groupId);
+          if (!hasMLS) throw new Error('群安全会话尚未建立或未就绪 (MLS State Missing)');
+          appMsg = await e2eeProxy.mlsEncrypt(groupId, applicationPayload);
+        } else {
+          const { MLSGroupManager } = await import('@/lib/e2ee/MLSGroupManager');
+          const mlsManager = MLSGroupManager.shared();
+          if (!mlsManager.isInitialized) await mlsManager.initialize(userId);
+          const hasMLS = await mlsManager.hasMLSState(groupId);
+          if (!hasMLS) throw new Error('群安全会话尚未建立或未就绪 (MLS State Missing)');
+          appMsg = await mlsManager.encryptMessage(groupId, applicationPayload);
+        }
+        if (!appMsg) throw new Error('MLS 消息加密生成失败');
+        finalContent = JSON.stringify({
+          _mls: true,
+          epoch: appMsg.epoch,
+          sender: appMsg.senderLeafIndex,
+          gen: appMsg.generation,
+          ct: appMsg.ciphertext,
+        });
+        mlsEncrypted = true;
+        mlsEpoch = appMsg.epoch;
+      } catch (err: any) {
+        console.error('[MLS] 强制加密失败，阻断发送:', err.message);
+        onNewMessageRef.current?.({
+          id: localId,
+          localId,
+          seq: 0,
+          senderId: userId,
+          senderName,
+          senderAvatar,
+          msgType: 'system',
+          content: `❌ 发送失败: ${err.message || '群安全会话未就绪'}`,
+          timestamp: Date.now(),
+          status: 'failed',
+        } as any);
+        return;
       }
-      const hasMLS = await mlsManager.hasMLSState(groupId);
-      if (!hasMLS) {
-        throw new Error('群安全会话尚未建立或未就绪 (MLS State Missing)');
-      }
-      const appMsg = await mlsManager.encryptMessage(groupId, content);
-      if (!appMsg) {
-        throw new Error('MLS 消息加密生成失败');
-      }
-      finalContent = JSON.stringify({
-        _mls: true,
-        epoch: appMsg.epoch,
-        sender: appMsg.senderLeafIndex,
-        gen: appMsg.generation,
-        ct: appMsg.ciphertext,
-      });
-      mlsEncrypted = true;
-      mlsEpoch = appMsg.epoch;
-      mlsPayload = appMsg;
-      console.log(`[MLS] 消息已强制加密, epoch=${appMsg.epoch}, gen=${appMsg.generation}`);
-    } catch (err: any) {
-      console.error('[MLS] 强制加密失败，阻断发送:', err.message);
-      onNewMessageRef.current?.({
-        id: localId,
-        localId,
-        seq: 0,
-        senderId: userId,
-        senderName,
-        senderAvatar,
-        msgType: 'system',
-        content: `❌ 发送失败: ${err.message || '群安全会话未就绪'}`,
-        timestamp: Date.now(),
-        status: 'failed',
-      } as any);
-      return;
     }
 
     // 乐观更新：立即显示在列表中（显示明文）
@@ -602,31 +634,27 @@ export function useGroupSync(options: UseGroupSyncOptions) {
       senderId: userId,
       senderName,
       senderAvatar,
-      msgType: mlsEncrypted ? 'mls_encrypted' : msgType,
-      content, // 本地显示明文
+      msgType,
+      content,
       extra,
       timestamp: Date.now(),
       status: 'sending',
       mlsEncrypted,
       mlsEpoch,
+      decryptionStatus: 'decrypted',
     };
 
     setMessages(prev => [...prev, optimisticMsg]);
+    void persistGroupMessages(groupId, [optimisticMsg], userId).catch(() => {});
 
-    // 强制 MLS：只允许发送 mls_encrypted（系统消息除外）
-    if (!mlsEncrypted && msgType !== 'system') {
-      console.error('[MLS] 阻断非加密群消息发送');
-      return;
-    }
-
-    // 通过 WebSocket 发送（强制加密内容）
+    // 通过 WebSocket 发送：业务消息只有 mls_encrypted，系统消息才允许 system。
     ws.send(JSON.stringify({
       type: 'group_send',
       payload: {
         groupId,
         content: finalContent,
-        msgType: 'mls_encrypted',
-        extra: { ...extra, mlsEncrypted: true, mlsEpoch },
+        msgType: isSystemMessage ? 'system' : 'mls_encrypted',
+        extra: isSystemMessage ? extra : { mlsEncrypted: true, mlsEpoch },
         localId,
         senderName,
       },

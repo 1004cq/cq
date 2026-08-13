@@ -12,6 +12,7 @@
 
 import { SignalStore, type KeyPairB64, type SessionRecord } from './SignalStore';
 import { clearDecryptedMessageCache } from '@/lib/localdb';
+import { e2eeProxy } from './WorkerProxy';
 import {
   generateKeyPair,
   exportKeyPair,
@@ -170,6 +171,11 @@ export class E2EEManager {
       this._registrationId = existing.registrationId;
       this._identityKeyPair = existing.identityKeyPair;
       this._initialized = true;
+      
+      // 启动 Worker 代理（极致优化：计算密集型任务后台化）。
+      // Worker 不可用时继续保留主线程实现，不能阻断登录。
+      await this.initializeWorkerIfAvailable();
+
       console.log('[E2EE] 已加载本地密钥，Registration ID:', this._registrationId);
       return;
     }
@@ -177,7 +183,22 @@ export class E2EEManager {
     // 生成新的密钥材料
     await this.generateLocalKeys();
     this._initialized = true;
+    
+    // 启动 Worker 代理（极致优化：计算密集型任务后台化）。
+    await this.initializeWorkerIfAvailable();
+
     console.log('[E2EE] 密钥生成完成，Registration ID:', this._registrationId);
+  }
+
+  private async initializeWorkerIfAvailable(): Promise<void> {
+    if (!e2eeProxy.isWorkerAvailable) return;
+    const userId = typeof localStorage !== 'undefined' ? localStorage.getItem('user_id') || '' : '';
+    if (!userId) return;
+    try {
+      await e2eeProxy.init(userId);
+    } catch (error) {
+      console.warn('[E2EE] Worker 初始化失败，回退主线程:', error);
+    }
   }
 
   /** 生成本地密钥材料 */

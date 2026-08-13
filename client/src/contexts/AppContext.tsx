@@ -26,6 +26,7 @@ import {
   persistPrivateMessages,
   clearDecryptedMessageCache,
 } from '@/lib/localdb';
+import { e2eeProxy } from '@/lib/e2ee/WorkerProxy';
 
 export interface AuthUser {
   id: string;
@@ -1011,7 +1012,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     const { E2EEManager } = await import('../lib/e2ee/E2EEManager');
                     const e2ee = E2EEManager.shared();
                     const envelope = JSON.parse(content);
-                    const decryptedStr = await e2ee.decrypt(senderId, envelope);
+                    // 极致优化：优先走 Worker 后台解密，保障主线程 UI 响应
+                    const decryptedStr = e2eeProxy.isReady
+                      ? await e2eeProxy.signalDecrypt(senderId, envelope)
+                      : await e2ee.decrypt(senderId, envelope);
+                      
                     const decrypted = JSON.parse(decryptedStr);
                     
                     decryptedContent = decrypted.content;

@@ -8,8 +8,10 @@ import {
   type E2EEStatus,
   type SessionInfo,
   type SignalEnvelope,
+  type PreKeyBundle,
 } from '@/lib/e2ee';
 import { trackE2EEFailure } from '@/lib/telemetry';
+import { e2eeProxy } from '@/lib/e2ee/WorkerProxy';
 
 interface UseE2EEReturn {
   /** E2EE 是否已初始化 */
@@ -24,6 +26,12 @@ interface UseE2EEReturn {
   decrypt: (peerId: string, envelope: SignalEnvelope) => Promise<string | null>;
   /** 获取会话信息 */
   getSessionInfo: (peerId: string) => Promise<SessionInfo | null>;
+  /** 获取真实远端 Bundle，不允许 Mock 回退 */
+  fetchRemoteBundle: (peerId: string) => Promise<PreKeyBundle>;
+  /** 建立 X3DH 会话 */
+  establishSession: (peerId: string, bundle: PreKeyBundle) => Promise<void>;
+  /** 客户端媒体文件加密 */
+  encryptFile: (fileBuffer: ArrayBuffer) => Promise<{ ciphertext: ArrayBuffer; fileKey: string; iv: string }>;
   /** 获取 Safety Number */
   getSafetyNumber: (peerId: string) => Promise<string>;
   /** 获取本地指纹 */
@@ -90,7 +98,10 @@ export function useE2EE(): UseE2EEReturn {
     const manager = managerRef.current;
     if (!manager?.isInitialized) return null;
     try {
-      return await manager.encrypt(peerId, plaintext);
+      // 默认将 Signal X3DH/Double Ratchet 放入 Worker；只有 Worker 不可用时才降级。
+      return e2eeProxy.isReady
+        ? await e2eeProxy.signalEncrypt(peerId, plaintext)
+        : await manager.encrypt(peerId, plaintext);
     } catch (err) {
       console.error('[useE2EE] 加密失败:', err);
       trackE2EEFailure('encrypt', { error: err, chatId: peerId, direction: 'outbound' });
@@ -102,7 +113,9 @@ export function useE2EE(): UseE2EEReturn {
     const manager = managerRef.current;
     if (!manager?.isInitialized) return null;
     try {
-      return await manager.decrypt(peerId, envelope);
+      return e2eeProxy.isReady
+        ? await e2eeProxy.signalDecrypt(peerId, envelope)
+        : await manager.decrypt(peerId, envelope);
     } catch (err) {
       console.error('[useE2EE] 解密失败:', err);
       trackE2EEFailure('decrypt', { error: err, chatId: peerId, direction: 'inbound' });
@@ -114,6 +127,26 @@ export function useE2EE(): UseE2EEReturn {
     const manager = managerRef.current;
     if (!manager?.isInitialized) return null;
     return manager.getSessionInfo(peerId);
+  }, []);
+
+  const fetchRemoteBundle = useCallback(async (peerId: string): Promise<PreKeyBundle> => {
+    const manager = managerRef.current;
+    if (!manager?.isInitialized) throw new Error('E2EE 未初始化');
+    return manager.fetchRemoteBundle(peerId);
+  }, []);
+
+  const establishSession = useCallback(async (peerId: string, bundle: PreKeyBundle): Promise<void> => {
+    const manager = managerRef.current;
+    if (!manager?.isInitialized) throw new Error('E2EE 未初始化');
+    return manager.establishSession(peerId, bundle);
+  }, []);
+
+  const encryptFile = useCallback(async (fileBuffer: ArrayBuffer) => {
+    const manager = managerRef.current;
+    if (!manager?.isInitialized) throw new Error('E2EE 未初始化');
+    return e2eeProxy.isReady
+      ? await e2eeProxy.signalEncryptFile(fileBuffer)
+      : await manager.encryptFile(fileBuffer);
   }, []);
 
   const getSafetyNumber = useCallback(async (peerId: string): Promise<string> => {
@@ -156,6 +189,9 @@ export function useE2EE(): UseE2EEReturn {
     encrypt,
     decrypt,
     getSessionInfo,
+    fetchRemoteBundle,
+    establishSession,
+    encryptFile,
     getSafetyNumber,
     getLocalFingerprint,
     getRemoteFingerprint,

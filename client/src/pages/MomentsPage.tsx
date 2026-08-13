@@ -163,7 +163,15 @@ async function uploadFileToCos(file: File, prefix: string, onProgress?: UploadPr
 }
 
 // ============ 类型定义 ============
-interface MomentMedia { type: 'image' | 'video'; url: string; thumbUrl?: string; mediumUrl?: string; }
+interface MomentMedia {
+  type: 'image' | 'video';
+  url: string;
+  thumbUrl?: string;
+  mediumUrl?: string;
+  lowQualityUrl?: string;
+  width?: number;
+  height?: number;
+}
 interface MomentComment {
   id: string; momentId: string; userId: string; userName: string;
   content: string; parentId?: string; replyToUserId?: string;
@@ -200,14 +208,20 @@ function formatDateLabel(timestamp: number): string {
 }
 
 // ============ 懒加载图片组件 ============
-const LazyImage = memo(({ src, alt = '', style, className, onClick }: {
-  src: string; alt?: string; style?: React.CSSProperties; className?: string; onClick?: () => void;
+const LazyImage = memo(({ src, placeholderSrc, alt = '', style, className, onClick }: {
+  src: string; placeholderSrc?: string; alt?: string; style?: React.CSSProperties; className?: string; onClick?: () => void;
 }) => {
   const imgRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [inView, setInView] = useState(false);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    setLoaded(false);
+    setError(false);
+    setRetryCount(0);
+  }, [src]);
 
   useEffect(() => {
     const el = imgRef.current;
@@ -265,15 +279,27 @@ const LazyImage = memo(({ src, alt = '', style, className, onClick }: {
         </div>
       )}
       {inView && !error && (
-        <img
-          src={imgSrc}
-          alt={alt}
-          style={{ ...style, opacity: loaded ? 1 : 0, transition: 'opacity 0.3s ease' }}
-          onLoad={() => setLoaded(true)}
-          onError={handleError}
-          loading="lazy"
-          decoding="async"
-        />
+        <>
+          {placeholderSrc && placeholderSrc !== src && !loaded && (
+            <img
+              src={placeholderSrc}
+              alt=""
+              aria-hidden="true"
+              style={{ ...style, position: 'absolute', inset: 0, filter: 'blur(12px)', transform: 'scale(1.06)', opacity: 0.85, objectFit: 'cover' }}
+              loading="eager"
+              decoding="async"
+            />
+          )}
+          <img
+            src={imgSrc}
+            alt={alt}
+            style={{ ...style, position: 'relative', opacity: loaded ? 1 : 0, transition: 'opacity 0.25s ease' }}
+            onLoad={() => setLoaded(true)}
+            onError={handleError}
+            loading="lazy"
+            decoding="async"
+          />
+        </>
       )}
     </div>
   );
@@ -404,45 +430,49 @@ const DoubleTapZone: React.FC<{ onDoubleTap: () => void; children: React.ReactNo
 });
 
 // ============ 微信风格图片网格（懒加载版）============
-const WechatImageGrid = memo(({ images, onImageClick }: { images: string[]; onImageClick: (images: string[], index: number) => void }) => {
+type GridImage = { src: string; placeholderSrc?: string; width?: number; height?: number };
+
+const WechatImageGrid = memo(({ images, onImageClick }: { images: GridImage[]; onImageClick: (images: string[], index: number) => void }) => {
   const count = images.length;
   if (count === 0) return null;
 
+  const originalUrls = images.map(image => image.src);
+  const singleAspect = images[0]?.width && images[0]?.height ? `${images[0].width} / ${images[0].height}` : undefined;
   const cellStyle: React.CSSProperties = { aspectRatio: "1/1", overflow: "hidden", borderRadius: 4, cursor: "pointer", position: "relative" };
   const imgStyle: React.CSSProperties = { width: "100%", height: "100%", objectFit: "cover" };
   const gap = 4;
 
-  const renderImg = (src: string, i: number) => (
-    <div key={i} style={cellStyle} onClick={() => onImageClick(images, i)}>
-      <LazyImage src={src} style={imgStyle} />
+  const renderImg = (image: GridImage, i: number) => (
+    <div key={`${image.src}-${i}`} style={cellStyle} onClick={() => onImageClick(originalUrls, i)}>
+      <LazyImage src={image.src} placeholderSrc={image.placeholderSrc} style={imgStyle} />
     </div>
   );
 
   if (count === 1) {
     return (
-      <div style={{ maxWidth: 240, overflow: "hidden", borderRadius: 6, cursor: "pointer" }} onClick={() => onImageClick(images, 0)}>
-        <LazyImage src={images[0]} style={{ width: "100%", height: "auto", display: "block", objectFit: "contain" }} />
+      <div style={{ maxWidth: 240, maxHeight: 320, aspectRatio: singleAspect, overflow: "hidden", borderRadius: 6, cursor: "pointer" }} onClick={() => onImageClick(originalUrls, 0)}>
+        <LazyImage src={images[0].src} placeholderSrc={images[0].placeholderSrc} style={{ width: "100%", height: "auto", display: "block", objectFit: "contain" }} />
       </div>
     );
   }
   if (count === 2) {
     return (
       <div style={{ maxWidth: 220, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap }}>
-        {images.map((src, i) => renderImg(src, i))}
+        {images.map((image, i) => renderImg(image, i))}
       </div>
     );
   }
   if (count === 3) {
     return (
       <div style={{ maxWidth: 300, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-        {images.map((src, i) => renderImg(src, i))}
+        {images.map((image, i) => renderImg(image, i))}
       </div>
     );
   }
   if (count === 4) {
     return (
       <div style={{ maxWidth: 220, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap }}>
-        {images.map((src, i) => renderImg(src, i))}
+        {images.map((image, i) => renderImg(image, i))}
       </div>
     );
   }
@@ -450,10 +480,10 @@ const WechatImageGrid = memo(({ images, onImageClick }: { images: string[]; onIm
     return (
       <div style={{ maxWidth: 300, display: "flex", flexDirection: "column", gap }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap }}>
-          {images.slice(0, 2).map((src, i) => renderImg(src, i))}
+          {images.slice(0, 2).map((image, i) => renderImg(image, i))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-          {images.slice(2, 5).map((src, i) => renderImg(src, i + 2))}
+          {images.slice(2, 5).map((image, i) => renderImg(image, i + 2))}
         </div>
       </div>
     );
@@ -461,21 +491,21 @@ const WechatImageGrid = memo(({ images, onImageClick }: { images: string[]; onIm
   if (count === 6) {
     return (
       <div style={{ maxWidth: 300, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-        {images.map((src, i) => renderImg(src, i))}
+        {images.map((image, i) => renderImg(image, i))}
       </div>
     );
   }
   if (count === 7) {
     return (
       <div style={{ maxWidth: 300, display: "flex", flexDirection: "column", gap }}>
-        <div style={{ aspectRatio: "3/1", overflow: "hidden", borderRadius: 2, cursor: "pointer" }} onClick={() => onImageClick(images, 0)}>
-          <LazyImage src={images[0]} style={imgStyle} />
+        <div style={{ aspectRatio: "3/1", overflow: "hidden", borderRadius: 2, cursor: "pointer" }} onClick={() => onImageClick(originalUrls, 0)}>
+          <LazyImage src={images[0].src} placeholderSrc={images[0].placeholderSrc} style={imgStyle} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-          {images.slice(1, 4).map((src, i) => renderImg(src, i + 1))}
+          {images.slice(1, 4).map((image, i) => renderImg(image, i + 1))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-          {images.slice(4, 7).map((src, i) => renderImg(src, i + 4))}
+          {images.slice(4, 7).map((image, i) => renderImg(image, i + 4))}
         </div>
       </div>
     );
@@ -484,13 +514,13 @@ const WechatImageGrid = memo(({ images, onImageClick }: { images: string[]; onIm
     return (
       <div style={{ maxWidth: 300, display: "flex", flexDirection: "column", gap }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap }}>
-          {images.slice(0, 2).map((src, i) => renderImg(src, i))}
+          {images.slice(0, 2).map((image, i) => renderImg(image, i))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-          {images.slice(2, 5).map((src, i) => renderImg(src, i + 2))}
+          {images.slice(2, 5).map((image, i) => renderImg(image, i + 2))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-          {images.slice(5, 8).map((src, i) => renderImg(src, i + 5))}
+          {images.slice(5, 8).map((image, i) => renderImg(image, i + 5))}
         </div>
       </div>
     );
@@ -498,7 +528,7 @@ const WechatImageGrid = memo(({ images, onImageClick }: { images: string[]; onIm
   // 9张
   return (
     <div style={{ maxWidth: 300, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap }}>
-      {images.slice(0, 9).map((src, i) => renderImg(src, i))}
+      {images.slice(0, 9).map((image, i) => renderImg(image, i))}
     </div>
   );
 });
@@ -839,7 +869,12 @@ const MomentCard = memo<{
   const displayContent = isLong && !expanded ? content.slice(0, MAX_LEN) : content;
   const imageMedia = useMemo(() => post.media.filter(m => m.type === 'image'), [post.media]);
   const imageUrls = useMemo(() => imageMedia.map(m => m.url), [imageMedia]);
-  const imageThumbUrls = useMemo(() => imageMedia.map(m => m.mediumUrl || m.url), [imageMedia]);
+  const imageGridItems = useMemo(() => imageMedia.map(m => ({
+    src: m.mediumUrl || m.url,
+    placeholderSrc: m.lowQualityUrl || m.thumbUrl,
+    width: m.width,
+    height: m.height,
+  })), [imageMedia]);
   const videoItems = useMemo(() => post.media.filter(m => m.type === 'video'), [post.media]);
   const visibleComments = useMemo(() => post.comments.filter(c => !c.isDeleted), [post.comments]);
 
@@ -906,7 +941,8 @@ const MomentCard = memo<{
         {/* 图片网格（列表页使用缩略图，点击查看原图，双击点赞） */}
         {imageUrls.length > 0 && (
           <DoubleTapZone onDoubleTap={() => onLike(post.id)} style={{ marginBottom: 8 }}>
-            <WechatImageGrid images={imageThumbUrls} onImageClick={(_, index) => onPreviewImages(imageUrls, index)} />
+                          <WechatImageGrid images={imageGridItems} onImageClick={(_, index) => onPreviewImages(imageUrls, index)} />
+
           </DoubleTapZone>
         )}
 
@@ -1752,6 +1788,9 @@ function convertApiMoment(m: any): MomentItem {
       url: item.url || '',
       thumbUrl: item.thumbUrl || undefined,
       mediumUrl: item.mediumUrl || undefined,
+      lowQualityUrl: item.lowQualityUrl || undefined,
+      width: typeof item.width === 'number' ? item.width : undefined,
+      height: typeof item.height === 'number' ? item.height : undefined,
     })),
     topics: m.topics || [],
     location: m.location || undefined,
@@ -1930,7 +1969,6 @@ export default function MomentsPage() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const initializedRef = useRef(false);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // 朋友圈视频自动播放开关（读取后端 site 配置）
   const [autoPlayVideo, setAutoPlayVideo] = useState(false);
@@ -2057,7 +2095,7 @@ export default function MomentsPage() {
     fetchFeed();
   }, [fetchFeed]);
 
-  // handleLoadMore 加 300ms 节流，避免哨兵 IntersectionObserver 在运行动画过程中反复触发
+  // 页面级虚拟列表按剩余高度触发分页，并在此处做轻量节流。
   const loadMoreCooldown = useRef(0);
   const handleLoadMore = useCallback(() => {
     if (loading || !hasMore || !nextCursor) return;
@@ -2114,20 +2152,6 @@ export default function MomentsPage() {
     window.addEventListener('moment_realtime_event', handler);
     return () => window.removeEventListener('moment_realtime_event', handler);
   }, []);
-
-  // IntersectionObserver 加载更多（带预加载：提前 400px 触发）
-  useEffect(() => {
-    if (!hasMore || loading) return;
-    const sentinel = loadMoreRef.current;
-    const container = scrollContainerRef.current;
-    if (!sentinel || !container) return;
-    const observer = new IntersectionObserver(
-      entries => { if (entries[0].isIntersecting) handleLoadMore(); },
-      { root: container, rootMargin: "400px" }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [hasMore, loading, handleLoadMore]);
 
   // 点赞（调用后端API + 本地乐观更新）
   const handleLike = useCallback(async (postId: string) => {
@@ -2292,7 +2316,7 @@ export default function MomentsPage() {
         id: newItem.id,
         authorId: newItem.authorId,
         authorName: newItem.authorName,
-        authorAvatar: newItem.authorAvatar,
+        authorAvatar: newItem.authorAvatar || '',
         content: newItem.content,
         images: newItem.media.filter(m => m.type === 'image').map(m => m.url),
         timestamp: newItem.createdAt,
@@ -2495,7 +2519,7 @@ export default function MomentsPage() {
                   loading={loading}
                   hasMore={hasMore}
                   onLoadMore={handleLoadMore}
-                  className="!overflow-visible"
+                  scrollParentRef={scrollContainerRef}
                   renderItem={(post) => (
                     <div style={{ borderBottom: "0.5px solid #f0f0f0", padding: "12px 16px" }}>
                       <MomentCard
@@ -2513,14 +2537,6 @@ export default function MomentsPage() {
                     </div>
                   )}
                 />
-                {loading && (
-                  <div style={{ textAlign: "center", padding: "16px 0" }}>
-                    <MomentSkeleton />
-                  </div>
-                )}
-                {!hasMore && normalPosts.length > 0 && (
-                  <div style={{ textAlign: "center", padding: "24px 0 40px", color: "#ccc", fontSize: 12 }}>— 已经到底了 —</div>
-                )}
               </>
             )}
           </div>

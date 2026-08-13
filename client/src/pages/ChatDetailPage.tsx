@@ -14,6 +14,7 @@ import {
 import { useE2EE } from '@/hooks/useE2EE';
 import { loadPrivateMessagesFromLocalDb } from '@/lib/localdb';
 import { trackE2EEFailure, trackEvent } from '@/lib/telemetry';
+import { e2eeProxy } from '@/lib/e2ee/WorkerProxy';
 import { useVoiceMessage } from '@/hooks/useVoiceMessage';
 import { VoiceMessageBubble, RecordingPreview } from '@/components/VoiceMessageBubble';
 import { BotVoiceBubble } from '@/components/BotVoiceBubble';
@@ -296,7 +297,13 @@ export default function ChatDetailPage() {
 
     const mergeMessages = (base: Message[], incoming: Message[]) => {
       const byId = new Map<string, Message>();
-      for (const message of [...base, ...incoming]) byId.set(message.id, message);
+      for (const message of base) byId.set(message.id, message);
+      for (const message of incoming) {
+        const existing = byId.get(message.id);
+        // 服务端只返回密文；本地已有已解密展示稿时不能被 ciphertext 占位覆盖。
+        if (existing && existing.decryptionStatus === 'decrypted' && message.decryptionStatus === 'ciphertext') continue;
+        byId.set(message.id, message);
+      }
       return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
     };
 
@@ -316,27 +323,64 @@ export default function ChatDetailPage() {
         const data = await response.json();
         if (!data?.messages || cancelled) return;
 
-        const msgs: Message[] = await Promise.all(data.messages.map(async (m: any) => {
+        // Double Ratchet 必须按同一对端的时间顺序串行推进，不能对整批消息 Promise.all。
+        const decryptResults = new Map<string, { plaintext?: string; error?: string; success: boolean }>();
+        const bySender = new Map<string, Array<{ id: string; envelope: any }>>();
+        for (const m of data.messages as any[]) {
+          // 自己发出的密文优先使用本地解密副本；换机后没有副本时不伪造明文。
+          if (m.msgType !== 'encrypted' || !m.content || m.isRevoked || m.senderId === currentUserId) continue;
+          try {
+            const list = bySender.get(m.senderId) || [];
+            list.push({ id: m.id, envelope: JSON.parse(m.content) });
+            bySender.set(m.senderId, list);
+          } catch {
+            decryptResults.set(m.id, { success: false, error: 'invalid_envelope' });
+          }
+        }
+
+        for (const [senderId, encryptedMessages] of bySender) {
+          const results = e2eeProxy.isReady
+            ? await e2eeProxy.signalBatchDecrypt(senderId, encryptedMessages)
+            : await (async () => {
+                const fallbackResults: Array<{ id: string; plaintext?: string; error?: string; success: boolean }> = [];
+                for (const item of encryptedMessages) {
+                  try {
+                    fallbackResults.push({ id: item.id, plaintext: await e2ee.decrypt(senderId, item.envelope), success: true });
+                  } catch (error) {
+                    fallbackResults.push({ id: item.id, error: error instanceof Error ? error.message : String(error), success: false });
+                  }
+                }
+                return fallbackResults;
+              })();
+          for (const result of results) decryptResults.set(result.id, result);
+        }
+
+        const msgs: Message[] = (data.messages as any[]).map((m: any) => {
           let decryptedContent = m.isRevoked ? '消息已撤回' : (m.content || '');
           let finalMsgType = m.msgType || 'text';
-          let finalExtra = typeof m.extra === 'string' ? JSON.parse(m.extra) : m.extra;
+          let finalExtra = typeof m.extra === 'string' ? (() => { try { return JSON.parse(m.extra); } catch { return {}; } })() : (m.extra || {});
           let decryptionFailed = false;
           let decryptionStatus: Message['decryptionStatus'] = 'decrypted';
 
           if (m.msgType === 'encrypted' && m.content && !m.isRevoked) {
-            try {
-              const envelope = JSON.parse(m.content);
-              const decryptedStr = await e2ee.decrypt(m.senderId, envelope);
-              const decrypted = JSON.parse(decryptedStr);
-              decryptedContent = decrypted.content;
-              finalMsgType = decrypted.msgType || 'text';
-              finalExtra = { ...finalExtra, ...decrypted.extra };
-            } catch (err) {
-              console.error('[E2EE] 历史消息解密失败:', err);
-              trackE2EEFailure('decrypt', { chatId, msgType: m.msgType, error: err, direction: 'inbound' });
-              decryptedContent = '🔒 无法解密历史消息';
-              decryptionFailed = true;
-              decryptionStatus = 'failed';
+            if (m.senderId === currentUserId) {
+              decryptedContent = '🔒 [本地加密消息]';
+              decryptionStatus = 'ciphertext';
+            } else {
+              const result = decryptResults.get(m.id);
+              try {
+                if (!result?.success || !result.plaintext) throw new Error(result?.error || 'decrypt_failed');
+                const decrypted = JSON.parse(result.plaintext);
+                decryptedContent = decrypted.content;
+                finalMsgType = decrypted.msgType || 'text';
+                finalExtra = { ...finalExtra, ...decrypted.extra };
+              } catch (err) {
+                console.error('[E2EE] 历史消息解密失败:', err);
+                trackE2EEFailure('decrypt', { chatId, msgType: m.msgType, error: err, direction: 'inbound' });
+                decryptedContent = '🔒 无法解密历史消息，请重新验证安全会话';
+                decryptionFailed = true;
+                decryptionStatus = 'failed';
+              }
             }
           } else if (m.msgType !== 'encrypted' && !m.isRevoked) {
             decryptedContent = '⚠️ [不支持的旧明文消息]';
@@ -367,7 +411,7 @@ export default function ChatDetailPage() {
             ...(finalExtra?.stickerUrl ? { stickerUrl: finalExtra.stickerUrl, stickerEmoji: finalExtra.stickerEmoji, stickerSetName: finalExtra.stickerSetName } : {}),
             ...(m.hmac ? { hmac: m.hmac, integrityStatus: 'unverified' as const } : {}),
           };
-        }));
+        });
 
         if (!cancelled) {
           setMessages(chatId, mergeMessages(cached, msgs));
@@ -888,6 +932,59 @@ export default function ChatDetailPage() {
           groupSync.sendMessage('[GIF]', 'image', { imageUrl: sticker.url });
           return;
         }
+        // 私聊 GIF 仍然是业务消息，完整资源地址必须在 Signal 明文载荷内。
+        if (chat?.type === 'private' && otherMember && chatId !== 'c0' && chatId !== 'cBOT') {
+          try {
+            const envelope = await e2ee.encrypt(otherMember, JSON.stringify({
+              content: '[GIF]',
+              msgType: 'image',
+              extra: { imageUrl: sticker.url },
+            }));
+            if (!envelope) throw new Error('无法建立安全会话');
+            const envelopeStr = JSON.stringify(envelope);
+            const gifHmac = integrityKey
+              ? await signMessage({ content: envelopeStr, senderId: currentUserId, chatId, msgType: 'encrypted', timestamp: gifTimestamp, integrityKey })
+              : undefined;
+            const msg: Message = {
+              id: tempId,
+              chatId,
+              senderId: currentUserId,
+              content: '[GIF]',
+              type: 'image',
+              timestamp: gifTimestamp,
+              isEncrypted: true,
+              reactions: {},
+              status: 'sending',
+              imageUrl: sticker.url,
+              burnAfterRead: effectiveBurnTimer,
+              forwardRestricted,
+              hmac: gifHmac,
+              integrityStatus: gifHmac ? 'verified' : 'unverified',
+            };
+            sendMessage(chatId, msg);
+            const ws = signalWs?.current;
+            const payload = { chatId, content: envelopeStr, msgType: 'encrypted', tempId, ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}), ...(gifHmac ? { hmac: gifHmac } : {}) };
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'private_send', payload }));
+            } else {
+              const token = localStorage.getItem('user_token');
+              if (!token) throw new Error('登录状态已失效');
+              const response = await fetch(`/api/chat/${chatId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(payload),
+              });
+              if (!response.ok) throw new Error(`发送失败 ${response.status}`);
+              const data = await response.json();
+              if (data?.message) dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId, realId: data.message.id });
+            }
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'GIF 发送失败，安全会话异常');
+          }
+          return;
+        }
+
+        // 官方/机器人等非私聊路径保留原有媒体发送语义。
         const msg: Message = {
           id: tempId,
           chatId,
@@ -895,34 +992,17 @@ export default function ChatDetailPage() {
           content: '[GIF]',
           type: 'image',
           timestamp: gifTimestamp,
-          isEncrypted: true,
+          isEncrypted: false,
           reactions: {},
           status: 'sending',
           imageUrl: sticker.url,
           burnAfterRead: effectiveBurnTimer,
           forwardRestricted,
-          hmac: gifHmac,
-          integrityStatus: gifHmac ? 'verified' : 'unverified',
         };
         sendMessage(chatId, msg);
         const ws = signalWs?.current;
-        if (ws && ws.readyState === WebSocket.OPEN && chatId !== 'c0' && chatId !== 'cBOT') {
-          ws.send(JSON.stringify({
-            type: 'private_send',
-            payload: { chatId, content: '[GIF]', msgType: 'image', tempId, extra: { imageUrl: sticker.url }, ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}), ...(gifHmac ? { hmac: gifHmac } : {}) },
-          }));
-        } else if (chatId !== 'c0' && chatId !== 'cBOT') {
-          const token = localStorage.getItem('user_token');
-          if (token) {
-            fetch(`/api/chat/${chatId}/messages`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-              body: JSON.stringify({ content: '[GIF]', msgType: 'image', extra: { imageUrl: sticker.url }, ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}), ...(gifHmac ? { hmac: gifHmac } : {}) }),
-            })
-              .then(r => r.ok ? r.json() : null)
-              .then(data => { if (data?.message) dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId, realId: data.message.id }); })
-              .catch(() => {});
-          }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'private_send', payload: { chatId, content: '[GIF]', msgType: 'image', tempId, extra: { imageUrl: sticker.url } } }));
         }
         return;
       }
@@ -1325,6 +1405,14 @@ export default function ChatDetailPage() {
         return;
       }
 
+      if (!otherMember) throw new Error('无法确认安全会话对端');
+      const envelope = await e2ee.encrypt(otherMember, JSON.stringify({
+        content: `[加密语音 ${payload.duration}秒]`,
+        msgType: 'voice',
+        extra,
+      }));
+      if (!envelope) throw new Error('无法建立安全会话');
+
       const response = await fetch(`/api/chat/${chatId}/messages`, {
         method: 'POST',
         headers: {
@@ -1332,9 +1420,8 @@ export default function ChatDetailPage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          content: `[加密语音 ${payload.duration}秒]`,
-          msgType: 'voice',
-          extra,
+          content: JSON.stringify(envelope),
+          msgType: 'encrypted',
           ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}),
         }),
       });
@@ -1351,7 +1438,7 @@ export default function ChatDetailPage() {
       console.error('[ChatDetail] 私聊语音发送失败:', error);
       toast.error('语音消息发送失败，请检查网络后重试');
     }
-  }, [voice, chatId, chat, burnTimer, forwardRestricted, sendMessage, addLog, currentUserId, dispatch]);
+  }, [voice, chatId, chat, burnTimer, forwardRestricted, sendMessage, addLog, currentUserId, dispatch, otherMember, e2ee]);
 
   // 展示语音消息播放状态
   const handlePlayVoice = useCallback((messageId: string, payload: any) => {
@@ -1660,6 +1747,20 @@ export default function ChatDetailPage() {
               locationType: 'location' as const,
               address: locResult.address,
             };
+            const isPrivateLocation = chat?.type === 'private' && !!otherMember && chatId !== 'c0' && chatId !== 'cBOT';
+            let wireContent = '[位置]';
+            let wireMsgType = 'location';
+            if (isPrivateLocation) {
+              const envelope = await e2ee.encrypt(otherMember!, JSON.stringify({
+                content: '[位置]',
+                msgType: 'location',
+                extra: { locationData },
+              }));
+              if (!envelope) throw new Error('无法建立安全会话');
+              wireContent = JSON.stringify(envelope);
+              wireMsgType = 'encrypted';
+            }
+
             const msg: Message = {
               id: tempId,
               chatId,
@@ -1667,7 +1768,7 @@ export default function ChatDetailPage() {
               content: '[位置]',
               type: 'location',
               timestamp: locTimestamp,
-              isEncrypted: false,
+              isEncrypted: isPrivateLocation,
               reactions: {},
               status: 'sending',
               locationData,
@@ -1677,42 +1778,29 @@ export default function ChatDetailPage() {
               integrityStatus: locHmac ? 'verified' : 'unverified',
             };
             sendMessage(chatId, msg);
-            // WS 发送
+
             const ws = signalWs?.current;
+            const wirePayload = {
+              chatId,
+              content: wireContent,
+              msgType: wireMsgType,
+              tempId,
+              ...(isPrivateLocation ? {} : { extra: { locationData } }),
+              ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}),
+              ...(locHmac ? { hmac: locHmac } : {}),
+            };
             if (ws && ws.readyState === WebSocket.OPEN && chatId !== 'c0' && chatId !== 'cBOT') {
-              ws.send(JSON.stringify({
-                type: 'private_send',
-                payload: {
-                  chatId,
-                  content: '[位置]',
-                  msgType: 'location',
-                  tempId,
-                  extra: { locationData },
-                  ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}),
-                  ...(locHmac ? { hmac: locHmac } : {}),
-                },
-              }));
+              ws.send(JSON.stringify({ type: 'private_send', payload: wirePayload }));
             } else if (chatId !== 'c0' && chatId !== 'cBOT') {
               const token = localStorage.getItem('user_token');
               if (token) {
-                fetch(`/api/chat/${chatId}/messages`, {
+                const response = await fetch(`/api/chat/${chatId}/messages`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                  body: JSON.stringify({
-                    content: '[位置]',
-                    msgType: 'location',
-                    extra: { locationData },
-                    ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}),
-                    ...(locHmac ? { hmac: locHmac } : {}),
-                  }),
-                })
-                  .then(r => r.ok ? r.json() : null)
-                  .then(res => {
-                    if (res?.message) {
-                      dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId, realId: res.message.id });
-                    }
-                  })
-                  .catch(() => {});
+                  body: JSON.stringify(wirePayload),
+                });
+                const res = await response.json().catch(() => null);
+                if (res?.message) dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId, realId: res.message.id });
               }
             }
             toast.success('位置消息已发送');
