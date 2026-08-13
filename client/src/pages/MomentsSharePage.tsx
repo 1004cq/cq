@@ -2,56 +2,10 @@
  * 朋友圈外链页面 — 与 pyq 项目完全一致的微信朋友圈风格
  * 适配 cqim 后端 API（/api/moments）
  */
-import { useState, useRef, useCallback, useEffect, memo } from "react";
-
-// ===== 类型定义 =====
-interface User {
-  id: string;
-  username: string;
-  nickname: string | null;
-  avatarUrl?: string | null;
-  avatar?: string | null;
-}
-
-interface LikeUser {
-  id: string;
-  username: string;
-  nickname: string | null;
-}
-
-interface Comment {
-  id: string;
-  content: string;
-  createdAt: string;
-  user: User;
-}
-
-interface Post {
-  id: string;
-  content: string | null;
-  images: string[] | null;
-  videos: string[] | null;
-  coverUrl?: string | null;
-  createdAt: string;
-  sortOrder?: number;
-  likesCount: number;
-  commentsCount: number;
-  isLiked: boolean;
-  isPinned?: boolean;
-  location?: string | null;
-  user: User;
-  comments: Comment[];
-  likeUsers?: LikeUser[];
-}
-
-interface ProfileUser {
-  id: string;
-  username: string;
-  nickname: string | null;
-  bio: string | null;
-  avatarUrl: string | null;
-  backgroundUrl?: string | null;
-}
+import { useState, useRef, useCallback, useEffect } from "react";
+import type { ShareComment as Comment, ShareLikeUser as LikeUser, SharePost as Post, ShareProfileUser as ProfileUser, ShareUser as User } from '@/components/moments/types';
+import SharedImageLightbox from '@/components/moments/ImageLightbox';
+import SharedVideoThumbnail from '@/components/moments/VideoThumbnail';
 
 // ===== 工具函数 =====
 function formatDateLabel(dateStr: string): string {
@@ -108,92 +62,6 @@ function getUserAvatar(user: User): string | null {
 
 // ===== 主题类型 =====
 type ThemeMode = "light" | "dark" | "system";
-
-// ===== VideoThumbnail =====
-const VideoThumbnail = memo(function VideoThumbnail({ src, coverUrl, style }: { src: string; coverUrl?: string; style?: React.CSSProperties }) {
-  if (coverUrl) {
-    return (
-      <div style={{ ...style, position: "relative", display: "block" }}>
-        <img src={coverUrl} alt="视频封面" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} />
-      </div>
-    );
-  }
-  return <video src={src} style={{ ...style, display: "block" }} muted playsInline preload="metadata" />;
-});
-
-// ===== ImageLightbox =====
-function ImageLightbox({ images, initialIndex, onClose }: { images: string[]; initialIndex: number; onClose: () => void }) {
-  const [current, setCurrent] = useState(initialIndex);
-  const [scale, setScale] = useState(1);
-  const touchStartX = useRef(0);
-  const touchStartY = useRef(0);
-
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
-  }, []);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") { setCurrent((c) => (c > 0 ? c - 1 : c)); setScale(1); }
-      if (e.key === "ArrowRight") { setCurrent((c) => (c < images.length - 1 ? c + 1 : c)); setScale(1); }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [images.length, onClose]);
-
-  return (
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 50, background: "#000", display: "flex", flexDirection: "column" }}
-      onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; touchStartY.current = e.touches[0].clientY; }}
-      onTouchEnd={(e) => {
-        const dx = e.changedTouches[0].clientX - touchStartX.current;
-        const dy = e.changedTouches[0].clientY - touchStartY.current;
-        if (Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(dx)) { onClose(); return; }
-        if (Math.abs(dx) > 50 && scale === 1) {
-          if (dx < 0) setCurrent((c) => Math.min(images.length - 1, c + 1));
-          else setCurrent((c) => Math.max(0, c - 1));
-        }
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-        <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}>{current + 1} / {images.length}</span>
-        <div style={{ width: 24 }} />
-      </div>
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative" }}
-        onDoubleClick={() => setScale((s) => s === 1 ? 2 : 1)}
-      >
-        <img src={images[current]} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", userSelect: "none", transform: `scale(${scale})`, transition: "transform 0.2s" }} />
-        {current > 0 && (
-          <button onClick={() => { setCurrent((c) => c - 1); setScale(1); }} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, background: "rgba(0,0,0,0.4)", borderRadius: "50%", display: "none", alignItems: "center", justifyContent: "center", border: "none", cursor: "pointer", color: "#fff" }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-          </button>
-        )}
-        {current < images.length - 1 && (
-          <button onClick={() => { setCurrent((c) => c + 1); setScale(1); }} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, background: "rgba(0,0,0,0.4)", borderRadius: "50%", display: "none", alignItems: "center", justifyContent: "center", border: "none", cursor: "pointer", color: "#fff" }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-          </button>
-        )}
-      </div>
-      {images.length > 1 && (
-        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px 16px" }}>
-          {images.map((img, i) => (
-            <button key={i} onClick={() => { setCurrent(i); setScale(1); }}
-              style={{ width: 40, height: 40, borderRadius: 4, overflow: "hidden", flexShrink: 0, border: i === current ? "2px solid #fff" : "2px solid transparent", opacity: i === current ? 1 : 0.5, padding: 0, background: "none", cursor: "pointer" }}>
-              <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ===== MomentCard（详情弹窗用，与 pyq 完全一致）=====
 const MAX_CONTENT_LENGTH = 120;
@@ -1254,7 +1122,7 @@ export default function MomentsSharePage() {
                             {cover.type === "image" ? (
                               <img src={cover.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
                             ) : (
-                              <VideoThumbnail src={cover.url} coverUrl={cover.coverUrl} style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
+                              <SharedVideoThumbnail src={cover.url} coverUrl={cover.coverUrl} style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
                             )}
                             {cover.type === "video" && (
                               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
@@ -1356,7 +1224,7 @@ export default function MomentsSharePage() {
                             {cover.type === "image" ? (
                               <img src={cover.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
                             ) : (
-                              <VideoThumbnail src={cover.url} coverUrl={cover.coverUrl} style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
+                              <SharedVideoThumbnail src={cover.url} coverUrl={cover.coverUrl} style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
                             )}
                             {cover.type === "video" && (
                               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
@@ -1463,7 +1331,7 @@ export default function MomentsSharePage() {
                       style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", background: colors.bgCard, cursor: pinnedSortMode ? "grab" : "pointer", position: "relative" }}
                     >
                       {cover ? (
-                        cover.type === "image" ? <img src={cover.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <VideoThumbnail src={cover.url} coverUrl={cover.coverUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        cover.type === "image" ? <img src={cover.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <SharedVideoThumbnail src={cover.url} coverUrl={cover.coverUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 8 }}>
                           <span style={{ fontSize: 11, color: colors.textMuted, textAlign: "center", lineHeight: 1.4 }}>{post.content?.slice(0, 24)}</span>
@@ -1589,7 +1457,7 @@ export default function MomentsSharePage() {
 
       {/* ===== 图片灯箱 ===== */}
       {lightboxImages.length > 0 && (
-        <ImageLightbox images={lightboxImages} initialIndex={lightboxIndex} onClose={() => setLightboxImages([])} />
+        <SharedImageLightbox images={lightboxImages} initialIndex={lightboxIndex} onClose={() => setLightboxImages([])} />
       )}
 
       <style>{`
