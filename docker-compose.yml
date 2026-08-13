@@ -1,0 +1,94 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: cqim-mongo
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]}).ok }\" | grep 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: cqim-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mysql:
+    image: mysql:8.4
+    container_name: cqim-mysql
+    restart: unless-stopped
+    command: ["mysqld", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change_this_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cqim_audit}
+      MYSQL_USER: ${MYSQL_USER:-cqim}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cqim}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  cqim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cqim:latest
+    container_name: cqim
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL:-mongodb://mongo:27017/cqim?replicaSet=rs0&directConnection=true}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      MYSQL_URL: ${MYSQL_URL:-mysql://cqim:cqim@mysql:3306/cqim_audit}
+      MYSQL_AUDIT_ENABLED: ${MYSQL_AUDIT_ENABLED:-true}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  mongo_data:
+  redis_data:
+  mysql_data:
