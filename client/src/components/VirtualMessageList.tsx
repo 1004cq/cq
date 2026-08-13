@@ -26,6 +26,7 @@ interface VirtualMessageListProps {
   loading?: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  loadMoreAt?: 'top' | 'bottom';
   renderMessage?: (
     msg: VirtualMessageItem,
     isOwn: boolean,
@@ -33,6 +34,7 @@ interface VirtualMessageListProps {
     previous?: VirtualMessageItem,
   ) => React.ReactNode;
   className?: string;
+  height?: number | string;
   estimatedRowHeight?: number;
 }
 
@@ -122,13 +124,16 @@ export const VirtualMessageList = memo(({
   loading = false,
   hasMore = true,
   onLoadMore,
+  loadMoreAt = 'top',
   renderMessage,
   className = '',
+  height,
   estimatedRowHeight = DEFAULT_ROW_HEIGHT,
 }: VirtualMessageListProps) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
+  const rowObserversRef = useRef(new Map<string, ResizeObserver>());
   const prependScrollRef = useRef<{ height: number; top: number } | null>(null);
   const isLoadingMoreRef = useRef(false);
   const isAtBottomRef = useRef(true);
@@ -184,13 +189,18 @@ export const VirtualMessageList = memo(({
       setScrollTop(container.scrollTop);
       setViewportHeight(container.clientHeight);
     });
-    if (container.scrollTop < LOAD_MORE_THRESHOLD && hasMore && onLoadMore && !isLoadingMoreRef.current) {
+    const nearLoadBoundary = loadMoreAt === 'bottom'
+      ? container.scrollHeight - container.scrollTop - container.clientHeight < LOAD_MORE_THRESHOLD
+      : container.scrollTop < LOAD_MORE_THRESHOLD;
+    if (nearLoadBoundary && hasMore && onLoadMore && !isLoadingMoreRef.current) {
       isLoadingMoreRef.current = true;
-      prependScrollRef.current = { height: container.scrollHeight, top: container.scrollTop };
+      prependScrollRef.current = loadMoreAt === 'top'
+        ? { height: container.scrollHeight, top: container.scrollTop }
+        : null;
       onLoadMore();
       window.setTimeout(() => { isLoadingMoreRef.current = false; }, 600);
     }
-  }, [hasMore, onLoadMore]);
+  }, [hasMore, loadMoreAt, onLoadMore]);
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current;
@@ -230,6 +240,8 @@ export const VirtualMessageList = memo(({
 
   useEffect(() => () => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rowObserversRef.current.forEach(observer => observer.disconnect());
+    rowObserversRef.current.clear();
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -239,7 +251,11 @@ export const VirtualMessageList = memo(({
   }, []);
 
   const measureRow = useCallback((key: string, node: HTMLDivElement | null) => {
+    const previousObserver = rowObserversRef.current.get(key);
+    previousObserver?.disconnect();
+    rowObserversRef.current.delete(key);
     if (!node || typeof ResizeObserver === 'undefined') return;
+
     const observer = new ResizeObserver(entries => {
       const height = entries[0]?.contentRect.height;
       if (height && Math.abs((rowHeightsRef.current.get(key) || 0) - height) > 1) {
@@ -247,11 +263,12 @@ export const VirtualMessageList = memo(({
         setLayoutVersion(version => version + 1);
       }
     });
+    rowObserversRef.current.set(key, observer);
     observer.observe(node);
   }, []);
 
   return (
-    <div className={`relative flex-1 overflow-hidden ${className}`}>
+    <div className={`relative flex-1 overflow-hidden ${className}`} style={height !== undefined ? { height } : undefined}>
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}

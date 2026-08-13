@@ -696,6 +696,21 @@ export function getAppStore() {
   return getAppZustandStore();
 }
 
+/**
+ * 领域级只读订阅：页面只订阅自己需要的切片，不再因 call/ui 等无关状态变化而读取整棵 AppState。
+ * 旧的 useApp() 保留给兼容代码和需要 signalWs/dispatch 的主容器。
+ */
+export function useAppSelector<T>(selector: (state: AppState) => T): T {
+  return useStore(getAppZustandStore(), (storeState) => selector(storeState.state));
+}
+
+export const useChats = () => useAppSelector(state => state.chats);
+export const useCurrentUserState = () => useAppSelector(state => state.currentUser);
+export const useCurrentChatId = () => useAppSelector(state => state.currentChatId);
+export const useOnlineUsers = () => useAppSelector(state => state.onlineUsers);
+const EMPTY_MESSAGES: Message[] = [];
+export const useChatMessages = (chatId: string | null) => useAppSelector(state => chatId ? (state.messages[chatId] || EMPTY_MESSAGES) : EMPTY_MESSAGES);
+
 const AppActionsContext = createContext<AppActionsContextType | null>(null);
 // 保留 AppContext 以兼容现有代码
 const AppContext = createContext<AppContextType | null>(null);

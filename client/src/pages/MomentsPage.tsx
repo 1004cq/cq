@@ -3,9 +3,10 @@
  * 性能优化版：图片懒加载、React.memo、骨架屏、滚动节流
  */
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import { useApp, useAppActions } from '@/contexts/AppContext';
+import { useCurrentUserState, useAppActions } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { DoveAvatar } from '@/components/DoveAvatar';
+import VirtualFeedList from '@/components/VirtualFeedList';
 import { formatTime, CURRENT_USER, type MomentPost } from '@/lib/store';
 import { AnimatePresence } from 'framer-motion';
 import { authApi, authFetch } from '@/lib/authFetch';
@@ -1898,10 +1899,10 @@ const PullToRefresh: React.FC<{
 
 // ============ 主页面组件 ============
 export default function MomentsPage() {
-  const { state } = useApp();
+  const currentUserState = useCurrentUserState();
   const { likeMoment, addComment, addMoment } = useAppActions();
   const { mode, toggleTheme } = useTheme();
-  const currentUser = state.currentUser || {
+  const currentUser = currentUserState || {
     id: CURRENT_USER.id,
     username: CURRENT_USER.id,
     nickname: CURRENT_USER.name,
@@ -2489,25 +2490,29 @@ export default function MomentsPage() {
               </div>
             ) : !initialLoading && (
               <>
-                {normalPosts.map(post => (
-                  <div key={post.id} style={{ borderBottom: "0.5px solid #f0f0f0", padding: "12px 16px" }}>
-                    <MomentCard
-                      post={post}
-                      currentUserId={currentUserId}
-                      currentUserName={currentUserName}
-                      autoPlayVideo={autoPlayVideo}
-                      onLike={handleLike}
-                      onComment={handleComment}
-                      onDeleteComment={handleDeleteComment}
-                      onDelete={handleDelete}
-                      onPin={handlePin}
-                      onPreviewImages={openLightbox}
-                    />
-                  </div>
-                ))}
-
-                {/* 加载更多哨兵 */}
-                <div ref={loadMoreRef} style={{ height: 1 }} />
+                <VirtualFeedList
+                  items={normalPosts}
+                  loading={loading}
+                  hasMore={hasMore}
+                  onLoadMore={handleLoadMore}
+                  className="!overflow-visible"
+                  renderItem={(post) => (
+                    <div style={{ borderBottom: "0.5px solid #f0f0f0", padding: "12px 16px" }}>
+                      <MomentCard
+                        post={post}
+                        currentUserId={currentUserId}
+                        currentUserName={currentUserName}
+                        autoPlayVideo={autoPlayVideo}
+                        onLike={handleLike}
+                        onComment={handleComment}
+                        onDeleteComment={handleDeleteComment}
+                        onDelete={handleDelete}
+                        onPin={handlePin}
+                        onPreviewImages={openLightbox}
+                      />
+                    </div>
+                  )}
+                />
                 {loading && (
                   <div style={{ textAlign: "center", padding: "16px 0" }}>
                     <MomentSkeleton />

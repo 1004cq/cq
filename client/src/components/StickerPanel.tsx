@@ -451,6 +451,52 @@ function matchesKeyword(item: StickerItem, packName: string, keyword: string) {
   );
 }
 
+const LazyStickerGrid: React.FC<{
+  items: StickerItem[];
+  panelTab: 'sticker' | 'meme' | 'gif';
+  onSelect: (item: StickerItem) => void;
+}> = ({ items, panelTab, onSelect }) => {
+  const PAGE_SIZE = panelTab === 'gif' ? 18 : 32;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [items, panelTab, PAGE_SIZE]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || visibleCount >= items.length || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setVisibleCount(count => Math.min(count + PAGE_SIZE, items.length));
+    }, { rootMargin: '220px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [items.length, visibleCount, PAGE_SIZE]);
+
+  const visibleItems = items.slice(0, visibleCount);
+  return (
+    <>
+      <div className={panelTab === 'gif' ? 'grid grid-cols-3 gap-2.5' : 'grid grid-cols-4 gap-2'}>
+        {visibleItems.map((item) => (
+          <motion.button
+            key={`${item.mediaType || panelTab}-${item.packId || 'local'}-${item.id}`}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.92 }}
+            onClick={() => onSelect({ ...item, mediaType: item.mediaType || panelTab })}
+            className={`group relative flex items-center justify-center overflow-hidden rounded-[22px] transition-colors ${panelTab === 'gif' ? 'aspect-[0.95] bg-dove-warm-gray/20 p-1.5 hover:bg-dove-warm-gray/35 dark:bg-slate-800/30 dark:hover:bg-slate-700/50' : 'aspect-square bg-white/55 p-1 hover:bg-dove-warm-gray/30 dark:bg-slate-800/20 dark:hover:bg-slate-700/40'}`}
+            title={`${item.emoji} ${item.name}`}
+          >
+            <StickerPreview sticker={item} compact={panelTab === 'gif'} />
+            {(panelTab === 'meme' || panelTab === 'gif') && <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent px-2 pb-1.5 pt-4 opacity-90"><div className="truncate text-[10px] font-medium text-white/92">{item.name}</div></div>}
+          </motion.button>
+        ))}
+      </div>
+      {visibleCount < items.length && <div ref={sentinelRef} className="h-8" aria-hidden="true" />}
+    </>
+  );
+};
+
 interface StickerPanelProps {
   onStickerSelect: (sticker: StickerItem) => void;
   onClose: () => void;
@@ -952,29 +998,7 @@ const StickerPanel: React.FC<StickerPanelProps> = ({ onStickerSelect, onClose })
               ))}
             </div>
           ) : (
-            <div key={contentViewKey} className={panelTab === 'gif' ? 'grid grid-cols-3 gap-2.5' : 'grid grid-cols-4 gap-2'}>
-              {currentMediaItems.map((item) => (
-                <motion.button
-                  key={`${item.mediaType || panelTab}-${item.packId || 'local'}-${item.id}`}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.92 }}
-                  onClick={() => handleSelect({ ...item, mediaType: item.mediaType || panelTab })}
-                  className={`group relative flex items-center justify-center overflow-hidden rounded-[22px] transition-colors ${
-                    panelTab === 'gif'
-                      ? 'aspect-[0.95] bg-dove-warm-gray/20 p-1.5 hover:bg-dove-warm-gray/35 dark:bg-slate-800/30 dark:hover:bg-slate-700/50'
-                      : 'aspect-square bg-white/55 p-1 hover:bg-dove-warm-gray/30 dark:bg-slate-800/20 dark:hover:bg-slate-700/40'
-                  }`}
-                  title={`${item.emoji} ${item.name}`}
-                >
-                  <StickerPreview sticker={item} compact={panelTab === 'gif'} />
-                  {(panelTab === 'meme' || panelTab === 'gif') && (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent px-2 pb-1.5 pt-4 opacity-90">
-                      <div className="truncate text-[10px] font-medium text-white/92">{item.name}</div>
-                    </div>
-                  )}
-                </motion.button>
-              ))}
-            </div>
+            <LazyStickerGrid items={currentMediaItems} panelTab={panelTab as 'sticker' | 'meme' | 'gif'} onSelect={handleSelect} />
           )}
         </motion.div>
       </AnimatePresence>

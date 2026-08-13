@@ -3,8 +3,8 @@
  * 统一搜索栏、精致卡片、流畅动画、深色下拉菜单
  * 已接入：发起群聊、添加朋友、扫一扫、我的二维码
  */
-import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { useApp, useAppActions } from '@/contexts/AppContext';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useChats, useCurrentUserState, useOnlineUsers, useAppActions } from '@/contexts/AppContext';
 import { DoveAvatar } from '@/components/DoveAvatar';
 import { formatTime, MOCK_USERS } from '@/lib/store';
 import type { Chat } from '@/lib/store';
@@ -18,11 +18,10 @@ import { QRCodeModal } from '@/components/QRCodeModal';
 import { ScannerModal } from '@/components/ScannerModal';
 import { AddFriendModal } from '@/components/AddFriendModal';
 import { CreateGroupModal } from '@/components/CreateGroupModal';
-import { getVisibleRange, rafThrottle } from '@/lib/performance';
+import FixedVirtualList from '@/components/VirtualList';
+import ChatListItem from '@/components/chat/ChatListItem';
 
 const CHAT_ITEM_HEIGHT = 80;
-const VIRTUALIZATION_THRESHOLD = 24;
-const VIRTUAL_BUFFER = 6;
 
 // ============ 新建会话弹窗 ============
 const NewChatSheet: React.FC<{
@@ -129,7 +128,9 @@ const ChatListSkeleton: React.FC = () => (
 );
 
 export default function ChatsPage() {
-  const { state } = useApp();
+  const chats = useChats();
+  const currentUserState = useCurrentUserState();
+  const onlineUsers = useOnlineUsers();
   const { openChat, deleteChat, pinChat } = useAppActions();
   const { theme, mode, toggleTheme } = useTheme();
   const [searchText, setSearchText] = useState('');
@@ -145,12 +146,10 @@ export default function ChatsPage() {
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [scannedUserId, setScannedUserId] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState<'all' | 'group'>('all');
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const initialListResolvedRef = useRef(state.chats.length > 0);
-  const [visibleRange, setVisibleRange] = useState({ start: 0, end: VIRTUALIZATION_THRESHOLD + VIRTUAL_BUFFER * 2 });
-  const [showListSkeleton, setShowListSkeleton] = useState(() => state.chats.length === 0);
+  const initialListResolvedRef = useRef(chats.length > 0);
+  const [showListSkeleton, setShowListSkeleton] = useState(() => chats.length === 0);
 
-  const currentUser = state.currentUser;
+  const currentUser = currentUserState;
 
   // Tab 过滤逻辑
   const isGroupChat = (chat: Chat) => chat.type === 'group';
@@ -162,7 +161,7 @@ export default function ChatsPage() {
   const isFixedOfficialChat = (chat: Chat) => getFixedChatRank(chat) < 99;
 
   const sortedChats = useMemo(() => {
-    return [...state.chats]
+    return [...chats]
       .filter(chat => {
         if (searchText && !chat.name.toLowerCase().includes(searchText.toLowerCase())) return false;
         if (activeTab === 'group') return isGroupChat(chat);
@@ -176,14 +175,14 @@ export default function ChatsPage() {
         if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
         return (b.lastMessageTime || 0) - (a.lastMessageTime || 0);
       });
-  }, [state.chats, searchText, activeTab]);
+  }, [chats, searchText, activeTab]);
 
-  const groupUnread = state.chats.filter(isGroupChat).reduce((s, c) => s + c.unreadCount, 0);
+  const groupUnread = chats.filter(isGroupChat).reduce((s, c) => s + c.unreadCount, 0);
 
   const handleSwipeAction = useCallback(async (chatId: string, action: 'pin' | 'delete') => {
     if (action === 'pin') {
       pinChat(chatId);
-      toast(state.chats.find(c => c.id === chatId)?.isPinned ? '已取消置顶' : '已置顶');
+      toast(chats.find(c => c.id === chatId)?.isPinned ? '已取消置顶' : '已置顶');
       setSwipedChatId(null);
       return;
     }
@@ -195,19 +194,19 @@ export default function ChatsPage() {
     } catch (err: any) {
       toast.error(err?.message || '删除会话失败');
     }
-  }, [pinChat, deleteChat, state.chats]);
+  }, [pinChat, deleteChat, chats]);
 
   const { upsertChat } = useAppActions();
 
   const handleSelectUser = useCallback(async (userId: string, userName: string) => {
-    const existing = state.chats.find(c => c.type === 'private' && c.members?.includes(userId));
+    const existing = chats.find(c => c.type === 'private' && c.members?.includes(userId));
     if (existing) {
       openChat(existing.id);
       return;
     }
     // 创建新私聊会话
     try {
-      const currentUserId = state.currentUser?.id || localStorage.getItem('user_id') || 'me';
+      const currentUserId = currentUserState?.id || localStorage.getItem('user_id') || 'me';
       const data = await authApi('/api/chat/create', { targetUserId: userId });
       if (data?.chat) {
         const c = data.chat;
@@ -233,7 +232,7 @@ export default function ChatsPage() {
     } catch (err: any) {
       toast.error(err.message || '创建会话失败');
     }
-  }, [state.chats, state.currentUser, openChat, upsertChat]);
+  }, [chats, currentUserState, openChat, upsertChat]);
 
   // 扫码成功后打开添加好友
   const handleScanResult = useCallback((userId: string) => {
@@ -241,56 +240,7 @@ export default function ChatsPage() {
     setShowAddFriend(true);
   }, []);
 
-  const totalUnread = state.chats.reduce((s, c) => s + c.unreadCount, 0);
-  const shouldVirtualize = sortedChats.length > VIRTUALIZATION_THRESHOLD;
-
-  const updateVisibleRange = useMemo(
-    () => rafThrottle(() => {
-      if (!listRef.current) return;
-      const { scrollTop, clientHeight } = listRef.current;
-      const nextRange = getVisibleRange(
-        scrollTop,
-        clientHeight || CHAT_ITEM_HEIGHT * VIRTUALIZATION_THRESHOLD,
-        CHAT_ITEM_HEIGHT,
-        sortedChats.length,
-        VIRTUAL_BUFFER,
-      );
-      setVisibleRange(prev => (
-        prev.start === nextRange.start && prev.end === nextRange.end ? prev : nextRange
-      ));
-    }),
-    [sortedChats.length],
-  );
-
-  useLayoutEffect(() => {
-    if (!shouldVirtualize) {
-      setVisibleRange({ start: 0, end: sortedChats.length });
-      return;
-    }
-
-    if (listRef.current) {
-      updateVisibleRange();
-      return;
-    }
-
-    setVisibleRange({
-      start: 0,
-      end: Math.min(sortedChats.length, VIRTUALIZATION_THRESHOLD + VIRTUAL_BUFFER * 2),
-    });
-  }, [shouldVirtualize, sortedChats.length, updateVisibleRange]);
-
-  useEffect(() => {
-    if (!listRef.current) return;
-    listRef.current.scrollTo({ top: 0, behavior: 'auto' });
-    if (shouldVirtualize) updateVisibleRange();
-  }, [searchText, activeTab, shouldVirtualize, updateVisibleRange]);
-
-  useEffect(() => {
-    if (!shouldVirtualize) return;
-    const handleResize = () => updateVisibleRange();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [shouldVirtualize, updateVisibleRange]);
+  const totalUnread = chats.reduce((s, c) => s + c.unreadCount, 0);
 
   useEffect(() => {
     if (initialListResolvedRef.current) {
@@ -298,7 +248,7 @@ export default function ChatsPage() {
       return;
     }
 
-    if (state.chats.length > 0) {
+    if (chats.length > 0) {
       initialListResolvedRef.current = true;
       setShowListSkeleton(false);
       return;
@@ -310,17 +260,7 @@ export default function ChatsPage() {
     }, 420);
 
     return () => window.clearTimeout(timer);
-  }, [state.chats.length]);
-
-  const visibleChats = useMemo(() => {
-    if (!shouldVirtualize) return sortedChats;
-    return sortedChats.slice(visibleRange.start, visibleRange.end);
-  }, [shouldVirtualize, sortedChats, visibleRange.start, visibleRange.end]);
-
-  const topSpacerHeight = shouldVirtualize ? visibleRange.start * CHAT_ITEM_HEIGHT : 0;
-  const bottomSpacerHeight = shouldVirtualize
-    ? Math.max(0, (sortedChats.length - visibleRange.end) * CHAT_ITEM_HEIGHT)
-    : 0;
+  }, [chats.length]);
 
   const menuItems = [
     {
@@ -478,157 +418,38 @@ export default function ChatsPage() {
         </motion.div>
       </div>
 
-      {/* 会话列表 */}
-      <div
-        ref={listRef}
-        className="flex-1 overflow-y-auto"
-        onScroll={shouldVirtualize ? updateVisibleRange : undefined}
-      >
-        {showListSkeleton && !searchText ? (
-          <ChatListSkeleton />
-        ) : (
-          <>
-            {topSpacerHeight > 0 && <div style={{ height: topSpacerHeight }} aria-hidden="true" />}
-            <AnimatePresence initial={false}>
-              {visibleChats.map((chat, index) => {
-                const isSwiped = swipedChatId === chat.id;
-                const entryDelay = shouldVirtualize ? 0 : Math.min(index, 8) * 0.02;
-
-                return (
-                  <motion.div
-                    key={chat.id}
-                    initial={shouldVirtualize ? false : { opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={shouldVirtualize ? undefined : { opacity: 0, x: -20 }}
-                    transition={{ delay: entryDelay, duration: 0.2 }}
-                    className="relative overflow-hidden"
-                    style={shouldVirtualize ? { minHeight: CHAT_ITEM_HEIGHT } : undefined}
-                  >
-                    {/* 滑动操作按钮（背景层） */}
-                    <AnimatePresence>
-                      {isSwiped && !isFixedOfficialChat(chat) && (
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="absolute inset-y-0 right-0 flex items-center z-10"
-                        >
-                          <button
-                            onClick={() => handleSwipeAction(chat.id, 'pin')}
-                            className="h-full px-5 bg-dove-bamboo/80 flex flex-col items-center justify-center gap-0.5"
-                          >
-                            <Pin size={15} className="text-white" />
-                            <span className="text-[10px] text-white">{chat.isPinned ? '取消' : '置顶'}</span>
-                          </button>
-                          <button
-                            onClick={() => handleSwipeAction(chat.id, 'delete')}
-                            className="h-full px-5 bg-red-500/80 flex flex-col items-center justify-center gap-0.5"
-                          >
-                            <X size={15} className="text-white" />
-                            <span className="text-[10px] text-white">删除</span>
-                          </button>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {/* 会话卡片 */}
-                    <motion.div
-                      animate={{ x: isSwiped ? -120 : 0 }}
-                      transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                      className={`dove-list-item cursor-pointer relative z-20 ${(chat.isPinned && !isFixedOfficialChat(chat)) ? 'bg-dove-warm-gray/60' : 'bg-background'}`}
-                      onClick={() => {
-                        if (isSwiped) { setSwipedChatId(null); return; }
-                        openChat(chat.id);
-                      }}
-                      onTouchStart={(e) => {
-                        if (isFixedOfficialChat(chat)) return;
-                        const startX = e.touches[0].clientX;
-                        const handleMove = (me: TouchEvent) => {
-                          const dx = me.touches[0].clientX - startX;
-                          if (dx < -40) setSwipedChatId(chat.id);
-                          else if (dx > 20) setSwipedChatId(null);
-                        };
-                        document.addEventListener('touchmove', handleMove, { passive: true });
-                        document.addEventListener('touchend', () => {
-                          document.removeEventListener('touchmove', handleMove);
-                        }, { once: true });
-                      }}
-                    >
-                      {/* 头像 */}
-                      <div className="relative flex-shrink-0">
-                        <DoveAvatar
-                          name={chat.name}
-                          id={chat.id}
-                          avatar={chat.avatar || ''}
-                          size="md"
-                          isGroup={chat.type === 'group'}
-                        />
-                        {chat.type === 'private' && (() => {
-                          // 获取私聊对方的 userId
-                          const currentUserId = state.currentUser?.id || localStorage.getItem('user_id') || 'me';
-                          const peerId = chat.members?.find(m => m !== currentUserId && m !== 'me');
-                          const isOnline = peerId ? state.onlineUsers.has(peerId) : false;
-                          return (
-                            <div className={`status-dot absolute -bottom-0.5 -right-0.5 ${
-                              isOnline ? 'status-dot-online' : 'status-dot-offline'
-                            }`} />
-                          );
-                        })()}
-                      </div>
-
-                      {/* 内容 */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-sm font-medium text-foreground truncate">{chat.name}</span>
-                            {chat.type === 'group' && (
-                              <MessageCircle
-                                size={14}
-                                strokeWidth={1.9}
-                                className="flex-shrink-0"
-                                style={{ color: '#1485ee', fill: 'none' }}
-                              />
-                            )}
-                            {chat.isOfficial && <GoldVerifiedBadge size={13} className="flex-shrink-0" />}
-                            {chat.isEncrypted && <Lock size={11} className="text-dove-bamboo/60 flex-shrink-0" />}
-                            {chat.isMuted && <VolumeX size={11} className="text-muted-foreground/40 flex-shrink-0" />}
-                            {chat.isPinned && !isFixedOfficialChat(chat) && <Pin size={10} className="text-dove-bamboo/50 flex-shrink-0" />}
-                          </div>
-                          <span className="text-[11px] text-muted-foreground/50 flex-shrink-0 ml-2">
-                            {formatTime(chat.lastMessageTime || 0)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-[12px] text-muted-foreground truncate flex-1">
-                            {chat.lastMessage || ''}
-                          </p>
-                          {chat.unreadCount > 0 && (
-                            <motion.span
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              className={`dove-badge ml-2 flex-shrink-0 ${chat.isMuted ? 'bg-muted-foreground/20 text-muted-foreground' : ''}`}
-                            >
-                              {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
-                            </motion.span>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-            {bottomSpacerHeight > 0 && <div style={{ height: bottomSpacerHeight }} aria-hidden="true" />}
-
-            {sortedChats.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                <Search size={32} className="mb-3 opacity-20" />
-                <p className="text-sm opacity-50">没有找到相关会话</p>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+      {/* 会话列表：超过阈值后只挂载可视窗口，保持固定行高以避免滚动抖动 */}
+      {showListSkeleton && !searchText ? (
+        <ChatListSkeleton />
+      ) : (
+        <FixedVirtualList
+          items={sortedChats}
+          itemHeight={CHAT_ITEM_HEIGHT}
+          className="flex-1 overflow-y-auto"
+          threshold={24}
+          overscan={6}
+          getKey={(chat) => chat.id}
+          emptyState={(
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Search size={32} className="mb-3 opacity-20" />
+              <p className="text-sm opacity-50">没有找到相关会话</p>
+            </div>
+          )}
+          renderItem={(chat, index) => (
+            <ChatListItem
+              chat={chat}
+              index={index}
+              isSwiped={swipedChatId === chat.id}
+              currentUserId={currentUserState?.id || localStorage.getItem('user_id') || 'me'}
+              onlineUsers={onlineUsers}
+              isFixed={isFixedOfficialChat(chat)}
+              onOpen={openChat}
+              onSwipeChange={setSwipedChatId}
+              onSwipeAction={handleSwipeAction}
+            />
+          )}
+        />
+      )}
 
       {/* 新建会话弹窗 */}
       <AnimatePresence>

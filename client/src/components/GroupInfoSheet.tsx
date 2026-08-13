@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ChevronLeft, ChevronRight, Plus, Minus,
+  ChevronLeft, Plus, Minus,
   Crown, ShieldCheck, Loader2, Link2, Copy, QrCode, Trash2, Camera,
 } from 'lucide-react';
 import { DoveAvatar } from '@/components/DoveAvatar';
@@ -14,6 +14,7 @@ import { GroupQRCodePage } from '@/components/GroupQRCodePage';
 import { InviteMembersModal } from '@/components/InviteMembersModal';
 import { useRemoteProfileSync, mergeProfileUpdate } from '@/hooks/useRemoteProfileSync';
 import { toast } from 'sonner';
+import { SettingRow } from '@/components/sheets/SheetPrimitives';
 
 interface MemberInfo {
   id: string;
@@ -52,99 +53,6 @@ interface GroupInfoSheetProps {
   onUpdated?: (updated: { name?: string; avatar?: string; username?: string | null }) => void;
   onShowProfile?: (userId: string) => void;
 }
-
-/* ====== 微信风格 Toggle 开关 ====== */
-const WxToggle: React.FC<{ on: boolean; onTap: () => void }> = ({ on, onTap }) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={on}
-    onClick={(e) => { e.stopPropagation(); onTap(); }}
-    style={{
-      position: 'relative',
-      width: 51,
-      minWidth: 51,
-      height: 31,
-      borderRadius: 16,
-      backgroundColor: on ? '#34c759' : '#e5e5ea',
-      border: 'none',
-      padding: 0,
-      cursor: 'pointer',
-      transition: 'background-color 0.2s',
-      flexShrink: 0,
-    }}
-  >
-    <span
-      style={{
-        position: 'absolute',
-        top: 2,
-        left: on ? 22 : 2,
-        width: 27,
-        height: 27,
-        borderRadius: '50%',
-        backgroundColor: '#fff',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-        transition: 'left 0.2s',
-      }}
-    />
-  </button>
-);
-
-/* ====== 设置行 ====== */
-const SettingRow: React.FC<{
-  label: string;
-  value?: string;
-  hasArrow?: boolean;
-  onClick?: () => void;
-  toggle?: { value: boolean; onChange: () => void };
-  isLast?: boolean;
-  labelColor?: string;
-  center?: boolean;
-}> = ({ label, value, hasArrow, onClick, toggle, isLast, labelColor, center }) => (
-  <div
-    onClick={onClick}
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: center ? 'center' : 'space-between',
-      padding: '13px 16px',
-      borderBottom: isLast ? 'none' : '1px solid rgba(0,0,0,0.05)',
-      cursor: onClick ? 'pointer' : 'default',
-      WebkitTapHighlightColor: 'transparent',
-      minHeight: 44,
-      boxSizing: 'border-box',
-      width: '100%',
-    }}
-  >
-    <span style={{
-      fontSize: 15,
-      color: labelColor || '#1c1c1e',
-      flexShrink: 0,
-      whiteSpace: 'nowrap',
-    }}>
-      {label}
-    </span>
-    {toggle ? (
-      <WxToggle on={toggle.value} onTap={toggle.onChange} />
-    ) : !center ? (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 12, minWidth: 0 }}>
-        {value && (
-          <span style={{
-            fontSize: 15,
-            color: '#8e8e93',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            maxWidth: 180,
-          }}>
-            {value}
-          </span>
-        )}
-        {hasArrow && <ChevronRight size={18} color="#c7c7cc" style={{ flexShrink: 0 }} />}
-      </div>
-    ) : null}
-  </div>
-);
 
 export const GroupInfoSheet: React.FC<GroupInfoSheetProps> = ({
   groupId,
