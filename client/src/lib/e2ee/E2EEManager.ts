@@ -219,8 +219,8 @@ export class E2EEManager {
     const reg = await this.store.getLocalRegistration();
     if (!reg || !(reg as any).signingKeyPair) {
       // 如果没有签名密钥对，重新生成（平滑升级）
-      const signingKP = await import('../lib/e2ee/CryptoUtils').then(m => m.generateSigningKeyPair());
-      const exportedSigning = await import('../lib/e2ee/CryptoUtils').then(m => m.exportKeyPair(signingKP as any));
+      const signingKP = await import('./CryptoUtils').then(m => m.generateSigningKeyPair());
+      const exportedSigning = await import('./CryptoUtils').then(m => m.exportKeyPair(signingKP as any));
       await this.store.saveLocalRegistration({
         ...reg!,
         signingKeyPair: exportedSigning,
@@ -229,10 +229,10 @@ export class E2EEManager {
     }
 
     const signingPrivKeyBase64 = (this._identityKeyPair as any).signingKeyPair.privKey;
-    const signingPriv = await import('../lib/e2ee/CryptoUtils').then(m => m.importPrivateKey(signingPrivKeyBase64, 'ECDSA'));
+    const signingPriv = await import('./CryptoUtils').then(m => m.importPrivateKey(signingPrivKeyBase64, 'ECDSA'));
     const signedPubBuf = base64ToBuffer(exported.pubKey);
 
-    const signatureBuf = await import('../lib/e2ee/CryptoUtils').then(m => m.sign(signingPriv, signedPubBuf));
+    const signatureBuf = await import('./CryptoUtils').then(m => m.sign(signingPriv, signedPubBuf));
     const signatureData = bufferToBase64(signatureBuf);
 
     await this.store.saveSignedPreKey({
@@ -420,7 +420,7 @@ export class E2EEManager {
       const remoteIdentityPubForVerify = await importPublicKey(bundle.identityKey, 'ECDSA');
       const signatureBuf = base64ToBuffer(bundle.signedPreKeySignature);
       const signedPubBuf = base64ToBuffer(bundle.signedPreKey);
-      const isValid = await import('../lib/e2ee/CryptoUtils').then(m => m.verify(remoteIdentityPubForVerify, signatureBuf, signedPubBuf));
+      const isValid = await import('./CryptoUtils').then(m => m.verify(remoteIdentityPubForVerify, signatureBuf, signedPubBuf));
       if (!isValid) {
         throw new Error('对端安全凭证签名验证失败');
       }

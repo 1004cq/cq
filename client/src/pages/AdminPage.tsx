@@ -3848,7 +3848,7 @@ function PyqCosTab() {
             type="text"
             value={config.secretId || ''}
             onChange={e => setConfig({ ...config, secretId: e.target.value })}
-            placeholder="请输入 SecretId"
+            placeholder="AKIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
             className="w-full bg-slate-700/50 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
           />
         </div>
@@ -4560,7 +4560,7 @@ function CosConfigPanel() {
               type={showSecretId ? 'text' : 'password'}
               value={config.secretId || ''}
               onChange={e => setConfig({ ...config, secretId: e.target.value })}
-              placeholder="请输入 SecretId"
+              placeholder="AKIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
               className="w-full bg-slate-700/50 border border-white/10 rounded-xl px-3 py-2 pr-10 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
             />
             <button

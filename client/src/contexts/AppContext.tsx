@@ -1024,45 +1024,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 notifyIncomingMessage(chatId, newMsg);
               })();
             }
-            return;
-          }
 
-          // 如果该会话不在列表中，动态创建
-              const currentState = stateRef.current;
-              if (!currentState.chats.find(c => c.id === chatId)) {
-                // 从 API 获取会话信息
-                const token = localStorage.getItem('user_token');
-                if (token) {
-                  fetch(`/api/chat/${chatId}`, {
-                    headers: { 'Authorization': `Bearer ${token}` },
+            // 如果该会话不在列表中，动态创建
+            const currentState = stateRef.current;
+            if (!currentState.chats.find(c => c.id === chatId)) {
+              const token = localStorage.getItem('user_token');
+              if (token) {
+                fetch(`/api/chat/${chatId}`, {
+                  headers: { 'Authorization': `Bearer ${token}` },
+                })
+                  .then(r => r.ok ? r.json() : null)
+                  .then(data => {
+                    if (data?.chat) {
+                      const c = data.chat;
+                      dispatch({
+                        type: 'UPSERT_CHAT',
+                        chat: normalizeSpecialChat({
+                          id: c.id,
+                          type: 'private',
+                          name: c.peer?.nickname || c.peer?.username || '未知用户',
+                          avatar: c.peer?.avatar || '',
+                          lastMessage: '🔒 [加密消息]',
+                          lastMessageTime: createdAt || Date.now(),
+                          unreadCount: 1,
+                          isPinned: false,
+                          isMuted: false,
+                          isEncrypted: true,
+                          members: [currentUserId, c.peer?.id].filter(Boolean),
+                        }),
+                      });
+                    }
                   })
-                    .then(r => r.ok ? r.json() : null)
-                    .then(data => {
-                      if (data?.chat) {
-                        const c = data.chat;
-                        dispatch({
-                          type: 'UPSERT_CHAT',
-                          chat: normalizeSpecialChat({
-                            id: c.id,
-                            type: 'private',
-                            name: c.peer?.nickname || c.peer?.username || '未知用户',
-                            avatar: c.peer?.avatar || '',
-                            lastMessage: '🔒 [加密消息]',
-                            lastMessageTime: createdAt || Date.now(),
-                            unreadCount: 1,
-                            isPinned: false,
-                            isMuted: false,
-                            isEncrypted: true,
-                            members: [currentUserId, c.peer?.id].filter(Boolean),
-                          }),
-                        });
-                      }
-                    })
-                    .catch(() => {});
-                }
+                  .catch(() => {});
               }
-              console.log(`[AppContext] 收到私聊消息: chatId=${chatId} from=${senderId}`);
             }
+            console.log(`[AppContext] 收到私聊消息: chatId=${chatId} from=${senderId}`);
             return;
           }
 

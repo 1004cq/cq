@@ -288,3 +288,120 @@ export async function deleteVerifyCodeRecord(target: string, type: string, chann
     await redis.del(getVerifyCodeKey(target, type, channel));
   } catch {}
 }
+
+
+// ============ 5. 兼容旧业务的会话与设备缓存 ============
+// 这些接口只提供短 TTL 缓存，不改变 MongoDB 作为认证和设备信息的事实来源。
+const SESSION_PREFIX = 'session:';
+const SESSION_CACHE_TTL = 60;
+const DEVICE_PREFIX = 'devices:';
+const LAST_SEEN_PREFIX = 'last_seen:';
+const DEVICE_TTL = 90;
+
+export interface RedisDeviceInfo {
+  deviceType?: string;
+  browser?: string;
+  os?: string;
+  ip?: string;
+  [key: string]: unknown;
+}
+
+export function parseUserAgent(userAgent: string, ip?: string): RedisDeviceInfo {
+  const ua = String(userAgent || '');
+  const os = /Windows/i.test(ua) ? 'Windows'
+    : /Android/i.test(ua) ? 'Android'
+      : /iPhone|iPad|iOS/i.test(ua) ? 'iOS'
+        : /Mac OS/i.test(ua) ? 'macOS'
+          : /Linux/i.test(ua) ? 'Linux' : 'Unknown';
+  const browser = /Edg\//i.test(ua) ? 'Edge'
+    : /Chrome\//i.test(ua) ? 'Chrome'
+      : /Firefox\//i.test(ua) ? 'Firefox'
+        : /Safari\//i.test(ua) ? 'Safari' : 'Unknown';
+  const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua) ? 'mobile' : 'desktop';
+  return { deviceType, browser, os, ...(ip ? { ip } : {}) };
+}
+
+export async function setUserDevice(userId: string, deviceId: string, device: RedisDeviceInfo): Promise<void> {
+  try {
+    const key = DEVICE_PREFIX + userId;
+    const pipeline = redis.pipeline();
+    pipeline.hset(key, deviceId, JSON.stringify({ ...device, lastSeen: Date.now() }));
+    pipeline.expire(key, DEVICE_TTL);
+    await pipeline.exec();
+  } catch {}
+}
+
+export async function removeUserDevice(userId: string, deviceId: string): Promise<void> {
+  try {
+    const key = DEVICE_PREFIX + userId;
+    const remaining = await redis.hdel(key, deviceId);
+    if (remaining >= 0) {
+      await redis.setex(LAST_SEEN_PREFIX + userId, 86400 * 30, Date.now().toString());
+    }
+  } catch {}
+}
+
+export async function getUserDevices(userId: string): Promise<RedisDeviceInfo[]> {
+  try {
+    const values = await redis.hgetall(DEVICE_PREFIX + userId);
+    return Object.values(values).flatMap(raw => {
+      try { return [JSON.parse(raw) as RedisDeviceInfo]; } catch { return []; }
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function getUserLastSeen(userId: string): Promise<number | null> {
+  try {
+    const raw = await redis.get(LAST_SEEN_PREFIX + userId);
+    const timestamp = raw ? Number(raw) : NaN;
+    return Number.isFinite(timestamp) ? timestamp : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getOnlineUsers(): Promise<string[]> {
+  try {
+    const keys = await scanKeys(ONLINE_PREFIX + '*');
+    return keys.map(key => key.slice(ONLINE_PREFIX.length)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function setSessionCache(token: string, session: unknown): Promise<void> {
+  try {
+    await redis.setex(SESSION_PREFIX + token, SESSION_CACHE_TTL, JSON.stringify(session));
+  } catch {}
+}
+
+export async function getSessionCache<T = any>(token: string): Promise<T | null> {
+  try {
+    const raw = await redis.get(SESSION_PREFIX + token);
+    return raw ? JSON.parse(raw) as T : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteSessionCache(token: string): Promise<void> {
+  try { await redis.del(SESSION_PREFIX + token); } catch {}
+}
+
+export async function deleteUserSessionCache(userId: string): Promise<void> {
+  try {
+    const keys = await scanKeys(SESSION_PREFIX + '*');
+    if (keys.length === 0) return;
+    const pipeline = redis.pipeline();
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      try {
+        const session = raw ? JSON.parse(raw) : null;
+        if (session?.user?.id === userId) pipeline.del(key);
+      } catch {}
+    }
+    await pipeline.exec();
+  } catch {}
+}

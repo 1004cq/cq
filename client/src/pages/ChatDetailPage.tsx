@@ -3,7 +3,7 @@
  * 集成 Signal Protocol E2EE：消息加密发送、解密接收、加密状态展示
  * 隐私安全功能：阅后即焚、消失消息模式、焚毁动画、截屏检测、防转发/防复制
  */
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { lazy, Suspense, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useApp, useAppActions } from '@/contexts/AppContext';
 import { DoveAvatar } from '@/components/DoveAvatar';
 import { EncryptionInfo } from '@/components/EncryptionInfo';
@@ -34,12 +34,16 @@ import { deriveIntegrityKey, signMessage, verifyMessage } from '@/lib/messageInt
 import { useGroupSync, type GroupMessage } from '@/hooks/useGroupSync';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { preFetchVideoStream } from '@/lib/mediaManager';
-import StickerPanel, { type StickerItem } from '@/components/StickerPanel';
+import type { StickerItem } from '@/components/StickerPanel';
+import VirtualMessageList, { type VirtualMessageItem } from '@/components/VirtualMessageList';
 import LottieSticker from '@/components/LottieSticker';
 import { GroupSettingsModal } from '@/components/GroupSettingsModal';
 import { GroupInfoSheet } from '@/components/GroupInfoSheet';
 import { PrivateChatInfoSheet } from '@/components/PrivateChatInfoSheet';
 import { MLSEncryptionInfo } from '@/components/MLSEncryptionInfo';
+
+const StickerPanel = lazy(() => import('@/components/StickerPanel'));
+
 
 const isAnimatedStickerSource = (url?: string, format?: string) => {
   if (format === 'json' || format === 'tgs') return true;
@@ -2524,6 +2528,60 @@ export default function ChatDetailPage() {
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
+  const renderVirtualMessage = useCallback((virtualMsg: VirtualMessageItem, _isOwn: boolean, index: number, previousVirtual?: VirtualMessageItem) => {
+    const msg = virtualMsg as unknown as Message;
+    const previous = previousVirtual as unknown as Message | undefined;
+    const showAvatar = !previous || previous.senderId !== msg.senderId || (msg.timestamp - previous.timestamp > 300000);
+    const showTimeGroup = shouldShowTimeGroup(msg, previous);
+    const senderProfile = (() => {
+      if (msg.senderId === currentUserId || msg.senderId === 'me') {
+        return {
+          name: state.currentUser?.nickname || state.currentUser?.username || CURRENT_USER.name,
+          avatar: state.currentUser?.avatar || CURRENT_USER.avatar,
+        };
+      }
+      if (msg.senderId === 'BOT') return { name: 'imim AI', avatar: '/imim-ai-avatar.jpg' };
+      if (msg.senderId === 'official') return { name: 'imim 官方', avatar: '/imim-official-avatar.jpg' };
+      if (chat?.type === 'group') return groupMembers.find(member => member.id === msg.senderId);
+      if (otherUser && msg.senderId === otherUser.id) return { name: otherUser.name, avatar: otherUser.avatar || '' };
+      return undefined;
+    })();
+
+    return (
+      <MemoizedChatBubble
+        key={msg.id || `${msg.senderId}-${index}`}
+        message={msg}
+        showAvatar={showAvatar}
+        showTimeGroup={showTimeGroup}
+        senderProfile={senderProfile}
+        onReaction={(emoji) => chatId && addReaction(chatId, msg.id, emoji)}
+        onBurn={handleBurn}
+        onMarkRead={handleMarkRead}
+        onPlayVoice={handlePlayVoice}
+        onStopVoice={handleStopVoice}
+        voicePlaybackState={voice.playbackStates[msg.id]}
+        onJoinLocationShare={(shareId) => { setLocationShareId(shareId); setShowLocationShare(true); }}
+        onRecall={(msgId) => {
+          if (!chatId) return;
+          if (isGroupChat && chat?.groupId) {
+            const gm = groupSync.messages.find(groupMessage => groupMessage.id === msgId);
+            groupSync.recallMessage(msgId, gm?.seq || 0);
+            toast('消息已撤回');
+          } else {
+            recallMessage(chatId, msgId);
+            const ws = signalWs?.current;
+            if (ws && ws.readyState === WebSocket.OPEN && otherMember) {
+              ws.send(JSON.stringify({ type: 'recall', payload: { toUserId: otherMember, messageId: msgId } }));
+            }
+          }
+        }}
+        onVerifyIntegrity={handleVerifyIntegrity}
+        onReply={handleReplyToMessage}
+        onShowProfile={showProfile}
+      />
+    );
+  }, [addReaction, chat, chatId, currentUserId, groupMembers, groupSync, handleBurn, handleMarkRead, handlePlayVoice, handleReplyToMessage, handleStopVoice, handleVerifyIntegrity, isGroupChat, otherMember, otherUser, recallMessage, showProfile, signalWs, state.currentUser, voice.playbackStates]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -2734,85 +2792,24 @@ export default function ChatDetailPage() {
         </motion.div>
       )}
 
-      {/* 消息列表 — GPU 加速滚动容器 */}
-      <div className="flex-1 overflow-y-auto px-1 py-3 chat-messages-container" style={{ background: 'var(--imim-chat-bg, transparent)' }}>
-        {/* 骨架屏加载占位 */}
-        {loadingMessages && messages.length === 0 && <ChatSkeleton />}
-        {messages.map((msg, i) => {
-          const prevMsg = messages[i - 1];
-          const showAvatar = !prevMsg || prevMsg.senderId !== msg.senderId ||
-            (msg.timestamp - prevMsg.timestamp > 300000);
-          const showTimeGroup = shouldShowTimeGroup(msg, prevMsg);
-          const senderProfile = (() => {
-            if (msg.senderId === currentUserId || msg.senderId === 'me') {
-              return {
-                name: state.currentUser?.nickname || state.currentUser?.username || CURRENT_USER.name,
-                avatar: state.currentUser?.avatar || CURRENT_USER.avatar,
-              };
-            }
-            if (msg.senderId === 'BOT') {
-              return { name: 'imim AI', avatar: '/imim-ai-avatar.jpg' };
-            }
-            if (msg.senderId === 'official') {
-              return { name: 'imim 官方', avatar: '/imim-official-avatar.jpg' };
-            }
-            if (chat?.type === 'group') {
-              const member = groupMembers.find(m => m.id === msg.senderId);
-              if (member) return member;
-            }
-            if (otherUser && msg.senderId === otherUser.id) {
-              return { name: otherUser.name, avatar: otherUser.avatar || '' };
-            }
-            return undefined;
-          })();
-          return (
-            <MemoizedChatBubble
-              key={msg.id}
-              message={msg}
-              showAvatar={showAvatar}
-              showTimeGroup={showTimeGroup}
-              senderProfile={senderProfile}
-              onReaction={(emoji) => chatId && addReaction(chatId, msg.id, emoji)}
-              onBurn={handleBurn}
-              onMarkRead={handleMarkRead}
-              onPlayVoice={handlePlayVoice}
-              onStopVoice={handleStopVoice}
-              voicePlaybackState={voice.playbackStates[msg.id]}
-              onJoinLocationShare={(shareId) => { setLocationShareId(shareId); setShowLocationShare(true); }}
-              onRecall={(msgId) => {
-                if (!chatId) return;
-                if (isGroupChat && chat?.groupId) {
-                  // 群聊撤回：通过 groupSync
-                  const gm = groupSync.messages.find(m => m.id === msgId);
-                  groupSync.recallMessage(msgId, gm?.seq || 0);
-                  toast('消息已撤回');
-                } else {
-                  // 私聊撤回
-                  recallMessage(chatId, msgId);
-                  const ws = signalWs?.current;
-                  if (ws && ws.readyState === WebSocket.OPEN && otherMember) {
-                    ws.send(JSON.stringify({
-                      type: 'recall',
-                      payload: { toUserId: otherMember, messageId: msgId },
-                    }));
-                  }
-                }
-              }}
-              onVerifyIntegrity={handleVerifyIntegrity}
-              onReply={handleReplyToMessage}
-              onShowProfile={showProfile}
-            />
-          );
-        })}
-
-        {/* 正在输入指示器 */}
+      {/* 消息列表：统一窗口化虚拟滚动，只渲染视口附近的消息 */}
+      <div className="flex-1 min-h-0 flex flex-col" style={{ background: 'var(--imim-chat-bg, transparent)' }}>
+        <VirtualMessageList
+          messages={messages as unknown as VirtualMessageItem[]}
+          currentUserId={currentUserId}
+          loading={loadingMessages}
+          hasMore={hasMoreMessages}
+          renderMessage={renderVirtualMessage}
+          className="px-1 py-3"
+          estimatedRowHeight={88}
+        />
         <AnimatePresence>
           {typingIndicator && (
             <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="flex gap-2 px-4 py-2"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="flex gap-2 px-4 py-2 overflow-hidden"
             >
               <DoveAvatar
                 name={otherUser?.name || '?'}
@@ -2822,26 +2819,18 @@ export default function ChatDetailPage() {
                 className="mt-1"
               />
               <div className="bubble-other px-4 py-3 flex items-center gap-1">
-                <motion.div
-                  className="w-2 h-2 bg-muted-foreground/40 rounded-full"
-                  animate={{ opacity: [0.3, 1, 0.3] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
-                />
-                <motion.div
-                  className="w-2 h-2 bg-muted-foreground/40 rounded-full"
-                  animate={{ opacity: [0.3, 1, 0.3] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
-                />
-                <motion.div
-                  className="w-2 h-2 bg-muted-foreground/40 rounded-full"
-                  animate={{ opacity: [0.3, 1, 0.3] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
-                />
+                {[0, 1, 2].map(index => (
+                  <motion.div
+                    key={index}
+                    className="w-2 h-2 bg-muted-foreground/40 rounded-full"
+                    animate={{ opacity: [0.3, 1, 0.3] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: index * 0.2 }}
+                  />
+                ))}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-
         <div ref={messagesEndRef} />
       </div>
 
@@ -3145,10 +3134,12 @@ export default function ChatDetailPage() {
         {/* 贴纸面板 */}
         <AnimatePresence>
           {showStickerPanel && (
-            <StickerPanel
-              onStickerSelect={handleSendSticker}
-              onClose={() => setShowStickerPanel(false)}
-            />
+            <Suspense fallback={<div className="fixed inset-x-3 bottom-20 z-50 h-64 rounded-2xl bg-white/80 dark:bg-dove-ink/80 animate-pulse" />}>
+              <StickerPanel
+                onStickerSelect={handleSendSticker}
+                onClose={() => setShowStickerPanel(false)}
+              />
+            </Suspense>
           )}
         </AnimatePresence>
 
