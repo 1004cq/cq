@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { fileURLToPath } from 'url';
 import { userAuth } from './auth.js';
@@ -15,6 +16,9 @@ const STICKER_MANIFEST_PATH = path.join(STICKER_DIR, 'manifest.json');
 const STICKER_STATIC_PREFIX = '/api/stickers/files';
 
 const MAX_DISCOVER_RESULTS = 24;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
+const TELEGRAM_MAX_STICKERS = 200;
+const TELEGRAM_MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 type StickerSourceType = 'remote' | 'local';
 
@@ -263,9 +267,7 @@ function safeWriteManifest(manifest: StickerManifest) {
 }
 
 function normalizeStickerUrl(item: StickerItem): string {
-  if (typeof item.url === 'string' && item.url.trim()) {
-    return item.url;
-  }
+  // 本地资源优先：部署后不依赖 Telegram/CDN 外链，远端 URL 仅作为旧 manifest 回退。
   if (typeof item.file === 'string' && item.file.trim()) {
     const safePath = item.file
       .split(/[\\/]+/)
@@ -273,6 +275,9 @@ function normalizeStickerUrl(item: StickerItem): string {
       .map(segment => encodeURIComponent(segment))
       .join('/');
     return `${STICKER_STATIC_PREFIX}/${safePath}`;
+  }
+  if (typeof item.url === 'string' && item.url.trim()) {
+    return item.url;
   }
   return '';
 }
@@ -405,6 +410,125 @@ function findCatalogPack(input: string) {
   }) || null;
 }
 
+interface TelegramApiResponse<T> {
+  ok: boolean;
+  result?: T;
+  description?: string;
+}
+
+interface TelegramSticker {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  is_animated?: boolean;
+  is_video?: boolean;
+  emoji?: string;
+  set_name?: string;
+  file_size?: number;
+}
+
+interface TelegramStickerSet {
+  name: string;
+  title: string;
+  is_animated?: boolean;
+  is_video?: boolean;
+  stickers: TelegramSticker[];
+}
+
+interface TelegramFile {
+  file_path?: string;
+  file_size?: number;
+}
+
+function telegramApiUrl(method: string) {
+  return `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`;
+}
+
+async function telegramApi<T>(method: string, body: Record<string, string>) {
+  if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN 未配置');
+  const response = await fetch(telegramApiUrl(method), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json() as TelegramApiResponse<T>;
+  if (!response.ok || !payload.ok || !payload.result) {
+    throw new Error(payload.description || `Telegram API ${method} 请求失败`);
+  }
+  return payload.result;
+}
+
+function telegramPackId(shortName: string) {
+  return `telegram_${createHash('sha256').update(shortName).digest('hex').slice(0, 18)}`;
+}
+
+function telegramFileExtension(sticker: TelegramSticker) {
+  return sticker.is_animated ? 'tgs' : 'webp';
+}
+
+async function downloadTelegramFile(filePath: string, targetPath: string) {
+  const response = await fetch(`https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`);
+  if (!response.ok) throw new Error(`Telegram 文件下载失败 (${response.status})`);
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > TELEGRAM_MAX_FILE_BYTES) throw new Error('贴纸文件超过大小限制');
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > TELEGRAM_MAX_FILE_BYTES) throw new Error('贴纸文件超过大小限制');
+  await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+  const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+  await fs.promises.writeFile(tempPath, buffer);
+  await fs.promises.rename(tempPath, targetPath);
+}
+
+async function importTelegramPack(input: string): Promise<StickerPack> {
+  const shortName = parseStickerPackInput(input);
+  if (!/^[a-zA-Z0-9_]{1,64}$/.test(shortName)) {
+    throw new Error('Telegram 贴纸包短名格式不正确');
+  }
+  const telegramSet = await telegramApi<TelegramStickerSet>('getStickerSet', { name: shortName });
+  const packId = telegramPackId(shortName);
+  const packDir = path.join('telegram', packId);
+  const eligibleStickers = telegramSet.stickers
+    .filter((sticker) => !sticker.is_video)
+    .slice(0, TELEGRAM_MAX_STICKERS);
+  const stickers: StickerItem[] = [];
+
+  for (const sticker of eligibleStickers) {
+    try {
+      const file = await telegramApi<TelegramFile>('getFile', { file_id: sticker.file_id });
+      if (!file.file_path) continue;
+      const extension = telegramFileExtension(sticker);
+      const relativeFile = path.join(packDir, `${sticker.file_unique_id}.${extension}`).replaceAll(path.sep, '/');
+      await downloadTelegramFile(file.file_path, path.join(STICKER_FILES_DIR, relativeFile));
+      stickers.push({
+        id: sticker.file_unique_id,
+        emoji: sticker.emoji || '🙂',
+        name: sticker.emoji || sticker.file_unique_id,
+        file: relativeFile,
+        format: extension,
+        width: sticker.width,
+        height: sticker.height,
+        keywords: sticker.emoji ? [sticker.emoji] : [],
+      });
+    } catch (error) {
+      console.warn(`[Sticker] Telegram 贴纸下载失败 (${sticker.file_unique_id}):`, error instanceof Error ? error.message : error);
+    }
+  }
+
+  if (!stickers.length) throw new Error('Telegram 贴纸包没有可用资源或下载失败');
+  return {
+    id: packId,
+    shortName,
+    shareUrl: buildShareUrl(shortName),
+    name: telegramSet.title || shortName,
+    icon: stickers[0]?.emoji || '🙂',
+    description: `Telegram 贴纸包 ${shortName}`,
+    sourceType: 'local',
+    keywords: [shortName, 'telegram'],
+    stickers,
+  };
+}
+
 router.use(userAuth);
 
 router.get('/discover', (req: Request, res: Response) => {
@@ -435,7 +559,7 @@ router.get('/discover', (req: Request, res: Response) => {
   });
 });
 
-router.post('/install', (req: Request, res: Response) => {
+router.post('/install', async (req: Request, res: Response) => {
   const rawInput = [req.body?.input, req.body?.shareUrl, req.body?.shortName, req.body?.packId]
     .map(value => String(value || '').trim())
     .find(Boolean);
@@ -444,9 +568,26 @@ router.post('/install', (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: '请提供贴纸包短名、链接或 packId' });
   }
 
-  const candidate = findCatalogPack(rawInput);
+  let candidate = findCatalogPack(rawInput);
+  let importedFromTelegram = false;
+  if (!candidate && TELEGRAM_BOT_TOKEN) {
+    try {
+      candidate = await importTelegramPack(rawInput);
+      importedFromTelegram = true;
+    } catch (error) {
+      return res.status(502).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Telegram 贴纸包导入失败',
+        meta: { telegramBotConfigured: true },
+      });
+    }
+  }
   if (!candidate) {
-    return res.status(404).json({ success: false, error: '暂未收录该贴纸包，请先输入推荐列表中的短链或名称' });
+    return res.status(404).json({
+      success: false,
+      error: TELEGRAM_BOT_TOKEN ? '暂未找到该 Telegram 贴纸包' : '暂未收录该贴纸包，请先输入推荐列表中的短链或名称',
+      meta: { telegramBotConfigured: Boolean(TELEGRAM_BOT_TOKEN) },
+    });
   }
 
   const currentManifest = safeReadManifest();
@@ -455,7 +596,7 @@ router.post('/install', (req: Request, res: Response) => {
   if (!alreadyInstalled) {
     currentManifest.packs = dedupePacks([candidate, ...currentManifest.packs]);
     currentManifest.updatedAt = new Date().toISOString();
-    currentManifest.source = 'catalog-install';
+    currentManifest.source = importedFromTelegram ? 'telegram-bot-install' : 'catalog-install';
     safeWriteManifest(currentManifest);
   }
 
@@ -464,7 +605,7 @@ router.post('/install', (req: Request, res: Response) => {
   const pack = manifest.packs.find(item => item.id === candidate.id) || candidate;
 
   // 异步触发 CDN 预热（不阻塞响应）
-  if (!alreadyInstalled && isPreheatEnabled()) {
+  if (!alreadyInstalled && pack.sourceType !== 'local' && isPreheatEnabled()) {
     preheatStickerPack(pack, { source: `install:${pack.id}` }).catch(err => {
       console.error(`[Sticker] CDN 预热失败 (${pack.id}):`, err);
     });
@@ -478,6 +619,7 @@ router.post('/install', (req: Request, res: Response) => {
       version: manifest.version,
       updatedAt: manifest.updatedAt,
       source: manifest.source,
+      telegramBotConfigured: Boolean(TELEGRAM_BOT_TOKEN),
       ...manifest.stats,
     },
   });
@@ -494,6 +636,7 @@ router.get('/packs', (_req: Request, res: Response) => {
       version: manifest.version,
       updatedAt: manifest.updatedAt,
       source: manifest.source,
+      telegramBotConfigured: Boolean(TELEGRAM_BOT_TOKEN),
       ...manifest.stats,
     },
   });
@@ -573,9 +716,9 @@ router.post('/reload', (_req: Request, res: Response) => {
 
   // 异步触发全量 CDN 预热（不阻塞响应）
   if (isPreheatEnabled()) {
-    const allUrls = manifest.packs.flatMap(pack =>
-      pack.stickers.flatMap(s => [s.url, s.thumbUrl].filter(Boolean) as string[])
-    );
+    const allUrls = manifest.packs
+      .filter((pack) => pack.sourceType !== 'local')
+      .flatMap((pack) => pack.stickers.flatMap((s) => [s.url, s.thumbUrl].filter(Boolean) as string[]));
     if (allUrls.length > 0) {
       preheatCdnResources(allUrls, { source: 'reload-all' }).catch(err => {
         console.error('[Sticker] reload 预热失败:', err);
@@ -590,6 +733,7 @@ router.post('/reload', (_req: Request, res: Response) => {
       version: manifest.version,
       updatedAt: manifest.updatedAt,
       source: manifest.source,
+      telegramBotConfigured: Boolean(TELEGRAM_BOT_TOKEN),
       ...manifest.stats,
     },
   });

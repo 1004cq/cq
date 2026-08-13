@@ -6,6 +6,8 @@
  */
 import React, { useRef, useEffect, useState } from 'react';
 import lottie, { type AnimationItem } from 'lottie-web';
+import { getStickerFromDisk, saveStickerToDisk } from './sticker/stickerDiskCache';
+import { stickerPrefetcher } from './sticker/stickerPrefetch';
 
 interface LottieStickerProps {
   /** Lottie JSON 文件 URL (.json / .tgs) 或内联 JSON 对象 */
@@ -24,22 +26,72 @@ interface LottieStickerProps {
   className?: string;
   /** 加载失败时的降级 emoji 显示 */
   fallbackEmoji?: string;
+  /** 可选静态缩略图，优先作为动画失败回退 */
+  fallbackSrc?: string;
 }
 
-// ===== 全局 Lottie 动画数据缓存（避免重复网络请求和解析） =====
+// ===== 全局 Lottie 动画数据缓存（内存 LRU + 磁盘 Cache API） =====
 const animationDataCache = new Map<string, object>();
+const MAX_MEMORY_CACHE = 40;
 const pendingFetches = new Map<string, Promise<object | null>>();
+
+function addToMemoryCache(url: string, data: object) {
+  if (animationDataCache.size >= MAX_MEMORY_CACHE) {
+    const firstKey = animationDataCache.keys().next().value;
+    if (firstKey) animationDataCache.delete(firstKey);
+  }
+  animationDataCache.set(url, data);
+}
 
 /**
  * 获取 Lottie 动画数据（支持 .json 和 .tgs 格式）
  * 带内存缓存、去重请求和重试机制
  */
 const failedUrls = new Set<string>();
+const activeAnimations = new Map<AnimationItem, number>();
+const MAX_ACTIVE_ANIMATIONS = 4;
+
+function playWithConcurrencyLimit(animation: AnimationItem) {
+  const now = Date.now();
+  if (!activeAnimations.has(animation) && activeAnimations.size >= MAX_ACTIVE_ANIMATIONS) {
+    const oldest = Array.from(activeAnimations.entries()).sort((a, b) => a[1] - b[1])[0]?.[0];
+    if (oldest) {
+      oldest.pause();
+      activeAnimations.delete(oldest);
+    }
+  }
+  activeAnimations.set(animation, now);
+  animation.play();
+}
+
+function releaseAnimation(animation: AnimationItem) {
+  animation.pause();
+  activeAnimations.delete(animation);
+}
 
 async function fetchAnimationData(url: string, retryCount = 0): Promise<object | null> {
-  // 命中缓存直接返回
+  // 1. 内存缓存 L0
   if (animationDataCache.has(url)) {
     return animationDataCache.get(url)!;
+  }
+
+  // 2. 磁盘缓存 L1
+  const diskData = await getStickerFromDisk(url);
+  if (diskData) {
+    try {
+      let json: object;
+      if (url.endsWith('.tgs') || /\.tgs(\?.*)?$/i.test(url)) {
+        const { default: pako } = await import('pako');
+        const inflated = pako.inflate(new Uint8Array(diskData));
+        json = JSON.parse(new TextDecoder().decode(inflated));
+      } else {
+        json = JSON.parse(new TextDecoder().decode(diskData));
+      }
+      addToMemoryCache(url, json);
+      return json;
+    } catch (e) {
+      console.warn('[LottieSticker] Disk cache parse failed:', url);
+    }
   }
 
   // 去重：如果同一 URL 正在请求中，复用 Promise
@@ -54,7 +106,7 @@ async function fetchAnimationData(url: string, retryCount = 0): Promise<object |
 
   const fetchPromise = (async () => {
     try {
-      const isTgs = url.endsWith('.tgs');
+      const isTgs = /\.tgs(\?.*)?$/i.test(url);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
       const resp = await fetch(url, { signal: controller.signal });
@@ -74,7 +126,8 @@ async function fetchAnimationData(url: string, retryCount = 0): Promise<object |
               new Blob([buffer]).stream().pipeThrough(ds)
             );
             const json = await decompressed.json();
-            animationDataCache.set(url, json);
+            void saveStickerToDisk(url, buffer);
+            addToMemoryCache(url, json);
             failedUrls.delete(url);
             return json;
           } catch (decompErr) {
@@ -87,7 +140,8 @@ async function fetchAnimationData(url: string, retryCount = 0): Promise<object |
           const inflated = pako.inflate(uint8);
           const text = new TextDecoder('utf-8').decode(inflated);
           const json = JSON.parse(text);
-          animationDataCache.set(url, json);
+          void saveStickerToDisk(url, buffer);
+          addToMemoryCache(url, json);
           failedUrls.delete(url);
           return json;
         } catch (pakoErr) {
@@ -97,8 +151,11 @@ async function fetchAnimationData(url: string, retryCount = 0): Promise<object |
         }
       } else {
         try {
+          const responseClone = resp.clone();
           const json = await resp.json();
-          animationDataCache.set(url, json);
+          const buffer = await responseClone.arrayBuffer();
+          void saveStickerToDisk(url, buffer);
+          addToMemoryCache(url, json);
           failedUrls.delete(url);
           return json;
         } catch (jsonErr) {
@@ -155,6 +212,7 @@ const LottieSticker: React.FC<LottieStickerProps> = ({
   onClick,
   className = '',
   fallbackEmoji,
+  fallbackSrc,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<AnimationItem | null>(null);
@@ -168,6 +226,7 @@ const LottieSticker: React.FC<LottieStickerProps> = ({
       setIsLoaded(false);
       setHasError(true);
       if (animRef.current) {
+        releaseAnimation(animRef.current);
         animRef.current.destroy();
         animRef.current = null;
       }
@@ -242,6 +301,7 @@ const LottieSticker: React.FC<LottieStickerProps> = ({
     return () => {
       cancelled = true;
       if (animRef.current) {
+        releaseAnimation(animRef.current);
         animRef.current.destroy();
         animRef.current = null;
       }
@@ -257,9 +317,9 @@ const LottieSticker: React.FC<LottieStickerProps> = ({
         entries.forEach((entry) => {
           if (animRef.current) {
             if (entry.isIntersecting) {
-              animRef.current.play();
+              playWithConcurrencyLimit(animRef.current);
             } else {
-              animRef.current.pause();
+              releaseAnimation(animRef.current);
             }
           }
         });
@@ -277,20 +337,28 @@ const LottieSticker: React.FC<LottieStickerProps> = ({
       style={{ width, height }}
       onClick={onClick}
     >
-      {/* 骨架屏 / 加载态 */}
+      {/* 骨架屏 / 缩略图占位 */}
       {!shouldUseStaticFallback && !isLoaded && !hasError && (
-        <div
-          className="absolute inset-0 rounded-2xl animate-pulse"
-          style={{
-            background: 'linear-gradient(135deg, rgba(200,200,200,0.15), rgba(200,200,200,0.08))',
-          }}
-        />
+        <div className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-2xl">
+          {fallbackSrc ? (
+            <img src={fallbackSrc} alt={fallbackEmoji || '贴纸'} width={width} height={height} className="h-full w-full object-contain opacity-50" loading="eager" decoding="async" />
+          ) : (
+            <div
+              className="h-full w-full animate-pulse"
+              style={{
+                background: 'linear-gradient(135deg, rgba(200,200,200,0.15), rgba(200,200,200,0.08))',
+              }}
+            />
+          )}
+        </div>
       )}
 
       {/* 错误态：优先显示 fallbackEmoji，否则显示占位图标 */}
       {hasError && (
         <div className="absolute inset-0 flex items-center justify-center">
-          {fallbackEmoji ? (
+          {fallbackSrc ? (
+            <img src={fallbackSrc} alt={fallbackEmoji || '贴纸'} width={width} height={height} className="h-full w-full rounded-2xl object-contain" loading="lazy" decoding="async" />
+          ) : fallbackEmoji ? (
             <span style={{ fontSize: Math.round(width * 0.55) }}>{fallbackEmoji}</span>
           ) : (
             <div className="text-muted-foreground/40">
