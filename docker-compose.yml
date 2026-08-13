@@ -1,13 +1,28 @@
 version: '3.9'
 
 services:
+  nginx:
+    image: nginx:stable-alpine
+    container_name: cqim-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - cqim
+      - go-gateway
+
   mongo:
     image: mongo:7
     container_name: cqim-mongo
     restart: unless-stopped
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
-    ports:
-      - "${MONGO_PORT:-27017}:27017"
+    # Removed public ports for security
+    expose:
+      - "27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -22,8 +37,9 @@ services:
     container_name: cqim-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # Removed public ports for security
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -43,8 +59,9 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-cqim_audit}
       MYSQL_USER: ${MYSQL_USER:-cqim}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cqim}
-    ports:
-      - "${MYSQL_PORT:-3306}:3306"
+    # Removed public ports for security
+    expose:
+      - "3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -61,8 +78,9 @@ services:
     image: cqim:latest
     container_name: cqim
     restart: unless-stopped
-    ports:
-      - "${PORT:-3000}:3000"
+    # Removed public ports, access via nginx
+    expose:
+      - "3000"
     env_file:
       - .env
     depends_on:
@@ -79,6 +97,12 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       MYSQL_URL: ${MYSQL_URL:-mysql://cqim:cqim@mysql:3306/cqim_audit}
       MYSQL_AUDIT_ENABLED: ${MYSQL_AUDIT_ENABLED:-true}
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 512M
     volumes:
       - ./data:/app/data
     healthcheck:
@@ -87,6 +111,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  go-gateway:
+    build:
+      context: ./go-gateway
+      dockerfile: Dockerfile
+    image: cqim-gateway:latest
+    container_name: cqim-gateway
+    restart: unless-stopped
+    expose:
+      - "8081"
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   mongo_data:
