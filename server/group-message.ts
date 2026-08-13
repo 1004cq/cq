@@ -324,18 +324,24 @@ class BatchMessageQueue {
       const maxTimestamp = batch[batch.length - 1].timestamp;
 
       await prisma.$transaction([
-        // 批量创建消息
+        // 批量创建消息：强制 MLS 检查，拒绝明文业务消息
         prisma.groupMessage.createMany({
-          data: batch.map(item => ({
-            groupId: item.payload.groupId,
-            seq: item.seq,
-            senderId: item.payload.senderId,
-            senderName: item.payload.senderName || item.payload.senderId,
-            msgType: item.payload.msgType || 'text',
-            content: item.payload.content,
-            replyToId: item.payload.replyToId,
-            extra: item.payload.extra ? JSON.stringify(item.payload.extra) : null,
-          })),
+          data: batch.map(item => {
+            const mType = item.payload.msgType || 'mls_encrypted';
+            if (mType !== 'mls_encrypted' && mType !== 'system') {
+              throw new Error('群聊强制要求 MLS 加密，拒绝写入明文业务消息');
+            }
+            return {
+              groupId: item.payload.groupId,
+              seq: item.seq,
+              senderId: item.payload.senderId,
+              senderName: item.payload.senderName || item.payload.senderId,
+              msgType: mType,
+              content: item.payload.content,
+              replyToId: item.payload.replyToId,
+              extra: item.payload.extra ? JSON.stringify(item.payload.extra) : null,
+            };
+          }),
         }),
         // 单次更新群最新序列号
         prisma.group.update({
@@ -366,13 +372,17 @@ class BatchMessageQueue {
       console.error(`[GroupMsg] 批量落库失败(${batch.length}条), groupId=${groupId}, 降级逐条重试`, err);
       for (const item of batch) {
         try {
+          const mType = item.payload.msgType || 'mls_encrypted';
+          if (mType !== 'mls_encrypted' && mType !== 'system') {
+            throw new Error('群聊强制要求 MLS 加密，拒绝写入明文业务消息');
+          }
           await prisma.groupMessage.create({
             data: {
               groupId: item.payload.groupId,
               seq: item.seq,
               senderId: item.payload.senderId,
               senderName: item.payload.senderName || item.payload.senderId,
-              msgType: item.payload.msgType || 'text',
+              msgType: mType,
               content: item.payload.content,
               replyToId: item.payload.replyToId,
               extra: item.payload.extra ? JSON.stringify(item.payload.extra) : null,
@@ -836,6 +846,7 @@ export async function getUserGroups(userId: string) {
       type: membership.group.type,
       isPublic: membership.group.isPublic || false,
       memberCount: membership.group.memberCount,
+      lastMessage: '🔒 [加密消息]',
       unreadCount: unread,
       createdAt: membership.group.createdAt.getTime(),
       updatedAt: membership.group.updatedAt.getTime(),

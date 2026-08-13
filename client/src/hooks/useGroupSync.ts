@@ -414,20 +414,67 @@ export function useGroupSync(options: UseGroupSyncOptions) {
           }
           return;
         }
-        // 批量群消息推送
+        // 批量群消息推送：必须对 mls_encrypted 逐条解密，禁止明文透传
         if (data.type === 'group_message_batch' && data.groupId === groupId) {
-          const batchMsgs: GroupMessage[] = (data.messages || []).map((m: any) => ({
-            id: m.id || `gm-${m.seq}`,
-            seq: m.seq,
-            senderId: m.senderId,
-            senderName: m.senderName,
-            senderAvatar: m.senderAvatar,
-            msgType: m.msgType,
-            content: m.content,
-            replyToId: m.replyToId,
-            extra: m.extra,
-            timestamp: m.timestamp,
-            status: 'delivered' as const,
+          const batchMsgs: GroupMessage[] = await Promise.all((data.messages || []).map(async (m: any) => {
+            let msgContent = m.content;
+            let mlsEncrypted = false;
+            let mlsEpoch: number | undefined;
+            let mlsDecryptFailed = false;
+            let displayMsgType = m.msgType;
+
+            if (m.msgType === 'mls_encrypted' || (m.extra?.mlsEncrypted)) {
+              try {
+                const parsed = JSON.parse(m.content);
+                if (parsed._mls) {
+                  const { MLSGroupManager } = await import('../lib/e2ee/MLSGroupManager');
+                  const mlsManager = MLSGroupManager.shared();
+                  if (!mlsManager.isInitialized) {
+                    await mlsManager.initialize();
+                  }
+                  const decrypted = await mlsManager.decryptMessage({
+                    groupId,
+                    epoch: parsed.epoch,
+                    senderLeafIndex: parsed.sender,
+                    ciphertext: parsed.ct,
+                    generation: parsed.gen,
+                  });
+                  if (decrypted) {
+                    msgContent = decrypted;
+                    mlsEncrypted = true;
+                    mlsEpoch = parsed.epoch;
+                    displayMsgType = 'text';
+                  } else {
+                    throw new Error('MLS 解密返回空');
+                  }
+                }
+              } catch (err) {
+                console.warn('[MLS] 批量消息解密失败:', err);
+                msgContent = '🔒 加密消息（无法解密）';
+                mlsEncrypted = true;
+                mlsDecryptFailed = true;
+              }
+            } else if (m.msgType !== 'system') {
+              msgContent = '⚠️ [不支持的旧明文群消息]';
+              mlsDecryptFailed = true;
+            }
+
+            return {
+              id: m.id || `gm-${m.seq}`,
+              seq: m.seq,
+              senderId: m.senderId,
+              senderName: m.senderName,
+              senderAvatar: m.senderAvatar,
+              msgType: displayMsgType,
+              content: msgContent,
+              replyToId: m.replyToId,
+              extra: m.extra,
+              timestamp: m.timestamp,
+              status: 'delivered' as const,
+              mlsEncrypted,
+              mlsEpoch,
+              mlsDecryptFailed,
+            };
           }));
 
           handleBatchMessages(batchMsgs);
@@ -508,28 +555,43 @@ export function useGroupSync(options: UseGroupSyncOptions) {
     try {
       const { MLSGroupManager } = await import('../lib/e2ee/MLSGroupManager');
       const mlsManager = MLSGroupManager.shared();
-      if (mlsManager.isInitialized) {
-        const hasMLS = await mlsManager.hasMLSState(groupId);
-        if (hasMLS) {
-          const appMsg = await mlsManager.encryptMessage(groupId, content);
-          if (appMsg) {
-            // 加密成功：将加密负载序列化为 content
-            finalContent = JSON.stringify({
-              _mls: true,
-              epoch: appMsg.epoch,
-              sender: appMsg.senderLeafIndex,
-              gen: appMsg.generation,
-              ct: appMsg.ciphertext,
-            });
-            mlsEncrypted = true;
-            mlsEpoch = appMsg.epoch;
-            mlsPayload = appMsg;
-            console.log(`[MLS] 消息已加密, epoch=${appMsg.epoch}, gen=${appMsg.generation}`);
-          }
-        }
+      if (!mlsManager.isInitialized) {
+        await mlsManager.initialize();
       }
-    } catch (err) {
-      console.warn('[MLS] 加密失败，回退明文发送:', err);
+      const hasMLS = await mlsManager.hasMLSState(groupId);
+      if (!hasMLS) {
+        throw new Error('群安全会话尚未建立或未就绪 (MLS State Missing)');
+      }
+      const appMsg = await mlsManager.encryptMessage(groupId, content);
+      if (!appMsg) {
+        throw new Error('MLS 消息加密生成失败');
+      }
+      finalContent = JSON.stringify({
+        _mls: true,
+        epoch: appMsg.epoch,
+        sender: appMsg.senderLeafIndex,
+        gen: appMsg.generation,
+        ct: appMsg.ciphertext,
+      });
+      mlsEncrypted = true;
+      mlsEpoch = appMsg.epoch;
+      mlsPayload = appMsg;
+      console.log(`[MLS] 消息已强制加密, epoch=${appMsg.epoch}, gen=${appMsg.generation}`);
+    } catch (err: any) {
+      console.error('[MLS] 强制加密失败，阻断发送:', err.message);
+      onNewMessageRef.current?.({
+        id: localId,
+        localId,
+        seq: 0,
+        senderId: userId,
+        senderName,
+        senderAvatar,
+        msgType: 'system',
+        content: `❌ 发送失败: ${err.message || '群安全会话未就绪'}`,
+        timestamp: Date.now(),
+        status: 'failed',
+      } as any);
+      return;
     }
 
     // 乐观更新：立即显示在列表中（显示明文）
@@ -551,14 +613,20 @@ export function useGroupSync(options: UseGroupSyncOptions) {
 
     setMessages(prev => [...prev, optimisticMsg]);
 
-    // 通过 WebSocket 发送（加密后的内容）
+    // 强制 MLS：只允许发送 mls_encrypted（系统消息除外）
+    if (!mlsEncrypted && msgType !== 'system') {
+      console.error('[MLS] 阻断非加密群消息发送');
+      return;
+    }
+
+    // 通过 WebSocket 发送（强制加密内容）
     ws.send(JSON.stringify({
       type: 'group_send',
       payload: {
         groupId,
         content: finalContent,
-        msgType: mlsEncrypted ? 'mls_encrypted' : msgType,
-        extra: mlsEncrypted ? { ...extra, mlsEncrypted: true, mlsEpoch } : extra,
+        msgType: 'mls_encrypted',
+        extra: { ...extra, mlsEncrypted: true, mlsEpoch },
         localId,
         senderName,
       },

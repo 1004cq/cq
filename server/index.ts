@@ -874,6 +874,16 @@ async function handleMessage(client: SignalClient, raw: string) {
     case "group_send": {
       const { groupId, content, msgType, senderName, replyToId, extra, localId } = msg.payload || {};
       if (groupId && content) {
+        // 强制 MLS：业务消息必须是 mls_encrypted，拒绝明文 text
+        const effectiveMsgType = msgType || 'mls_encrypted';
+        if (effectiveMsgType !== 'mls_encrypted' && effectiveMsgType !== 'system') {
+          sendTo(client.userId, {
+            type: 'group_message' as any,
+            payload: { ack: true, groupId, seq: -1, timestamp: Date.now(), localId: localId || '', error: '群聊强制要求 MLS 端到端加密，禁止发送明文业务消息' },
+          });
+          return;
+        }
+
         // 异步查询发送者头像
         const senderUser = await prisma.user.findUnique({
           where: { id: client.userId },
@@ -884,7 +894,7 @@ async function handleMessage(client: SignalClient, raw: string) {
           senderId: client.userId,
           senderName: senderName || senderUser?.nickname || senderUser?.username || userRegistry.get(client.userId) || client.userId,
           senderAvatar: avatarToProxy(senderUser?.avatar),
-          msgType: msgType || 'text',
+          msgType: effectiveMsgType,
           content,
           replyToId,
           extra,
