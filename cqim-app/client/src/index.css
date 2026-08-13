@@ -1,0 +1,1681 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  /* DoveIM 自定义色彩 — 精致升级 */
+  --color-dove-green: oklch(0.58 0.14 155);
+  --color-dove-green-light: oklch(0.96 0.025 155);
+  --color-dove-ink: oklch(0.22 0.012 60);
+  --color-dove-paper: oklch(0.985 0.004 90);
+  --color-dove-warm-gray: oklch(0.94 0.004 80);
+  --color-dove-mist: oklch(0.975 0.003 90);
+  --color-dove-bamboo: oklch(0.62 0.09 155);
+  --color-dove-seal: oklch(0.52 0.19 25);
+  --font-wenkai: "LXGW WenKai", "Noto Serif SC", serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+}
+
+:root {
+  --primary: oklch(0.58 0.14 155);
+  --primary-foreground: oklch(0.99 0 0);
+  --sidebar-primary: oklch(0.58 0.14 155);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --chart-1: oklch(0.65 0.08 155);
+  --chart-2: oklch(0.58 0.14 155);
+  --chart-3: oklch(0.45 0.10 155);
+  --chart-4: oklch(0.52 0.19 25);
+  --chart-5: oklch(0.35 0.08 155);
+  --radius: 0.625rem;
+  --background: oklch(0.98 0.004 90);
+  --foreground: oklch(0.22 0.012 60);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.012 60);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.012 60);
+  --secondary: oklch(0.975 0.003 90);
+  --secondary-foreground: oklch(0.35 0.01 60);
+  --muted: oklch(0.95 0.004 80);
+  --muted-foreground: oklch(0.52 0.01 60);
+  --accent: oklch(0.96 0.025 155);
+  --accent-foreground: oklch(0.22 0.012 60);
+  --destructive: oklch(0.52 0.19 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.93 0.004 80);
+  --input: oklch(0.93 0.004 80);
+  --ring: oklch(0.58 0.14 155);
+  --sidebar: oklch(0.985 0.004 90);
+  --sidebar-foreground: oklch(0.22 0.012 60);
+  --sidebar-accent: oklch(0.96 0.025 155);
+  --sidebar-accent-foreground: oklch(0.22 0.012 60);
+  --sidebar-border: oklch(0.93 0.004 80);
+  --sidebar-ring: oklch(0.58 0.14 155);
+  /* CQIM 聊天主路径主题 token */
+  --imim-chat-shell-bg: linear-gradient(180deg, rgba(255, 227, 104, 0.92) 0%, rgba(99, 220, 240, 0.78) 25%, rgba(248, 144, 214, 0.72) 62%, rgba(181, 126, 255, 0.80) 100%);
+  --imim-chat-topbar-bg: rgba(255, 255, 255, 0.72);
+  --imim-chat-input-bg: rgba(255, 255, 255, 0.82);
+  --imim-chat-surface: rgba(255, 255, 255, 0.98);
+  --imim-chat-self-bg: linear-gradient(180deg, rgba(255, 245, 186, 0.98), rgba(255, 236, 144, 0.97));
+  --imim-chat-border: rgba(255, 255, 255, 0.58);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    letter-spacing: 0.01em;
+    text-rendering: optimizeLegibility;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-wenkai);
+    letter-spacing: 0.02em;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 480px;
+    }
+  }
+
+  /* ===== 移动端 IM 应用外壳 ===== */
+  .app-shell {
+    max-width: 480px;
+    margin: 0 auto;
+    height: 100dvh;
+    position: relative;
+    overflow: hidden;
+    background: var(--background);
+  }
+
+  /* ===== 管理后台全屏外壳 ===== */
+  .admin-shell {
+    width: 100%;
+    height: 100dvh;
+    position: relative;
+    overflow: hidden;
+    background: #0f172a;
+  }
+
+  @media (min-width: 481px) {
+    .app-shell {
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      box-shadow:
+        0 0 80px rgba(0,0,0,0.04),
+        0 0 20px rgba(0,0,0,0.02);
+    }
+  }
+
+  /* ===== GPU 加速与性能优化 ===== */
+
+  /* 消息气泡 GPU 合成层 — 只提升频繁动画的元素 */
+  .bubble-self,
+  .bubble-other {
+    will-change: transform, opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    contain: layout style paint;
+  }
+
+  /* 聊天消息列表容器 — 独立合成层 + 滚动优化 */
+  .chat-messages-container {
+    will-change: scroll-position;
+    contain: strict;
+    overflow-anchor: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: auto;
+  }
+
+  /* 页面过渡容器 — GPU 加速 */
+  .page-transition-container {
+    will-change: transform, opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+
+  /* 动画元素基础类 — 提升到合成层 */
+  .gpu-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  /* 消息项容器 — 布局隔离减少重排 */
+  .message-item {
+    contain: layout style;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 60px;
+  }
+
+  /* 骨架屏增强 — GPU 加速 shimmer */
+  .skeleton-enhanced {
+    background: linear-gradient(
+      90deg,
+      oklch(0.93 0.004 80) 25%,
+      oklch(0.97 0.003 80) 37%,
+      oklch(0.93 0.004 80) 63%
+    );
+    background-size: 400% 100%;
+    animation: skeleton-shimmer-gpu 1.4s ease infinite;
+    border-radius: 8px;
+    will-change: background-position;
+  }
+
+  @keyframes skeleton-shimmer-gpu {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  /* 消息发送飞出动画 */
+  @keyframes message-fly-in {
+    0% {
+      opacity: 0;
+      transform: translateY(20px) scale(0.92);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(-3px) scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-message-fly-in {
+    animation: message-fly-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* 消息淡入动画（他人消息） */
+  @keyframes message-fade-in {
+    0% {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-message-fade-in {
+    animation: message-fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* 滑动回复手势反馈 */
+  .swipe-reply-hint {
+    transform: translateZ(0);
+    transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 消息长按缩放反馈 */
+  .message-press-feedback {
+    transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .message-press-feedback:active {
+    transform: scale(0.98);
+  }
+
+  /* 聊天列表项滑动动画 */
+  .chat-list-item {
+    will-change: transform;
+    transform: translateZ(0);
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+                background-color 0.15s ease;
+  }
+
+  /* 输入框聚焦过渡 — GPU 加速 */
+  .chat-input-focus {
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    will-change: box-shadow;
+  }
+
+  /* 新消息提示浮标弹入 */
+  @keyframes float-badge-in {
+    0% {
+      opacity: 0;
+      transform: translateY(16px) scale(0.8);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-float-badge {
+    animation: float-badge-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  /* 减少动画偏好 — 尊重用户系统设置 */
+  @media (prefers-reduced-motion: reduce) {
+    .bubble-self,
+    .bubble-other,
+    .message-item,
+    .chat-list-item,
+    .page-transition-container {
+      will-change: auto;
+      animation: none !important;
+      transition-duration: 0.01ms !important;
+    }
+    .skeleton-enhanced {
+      animation: none;
+    }
+  }
+
+  /* ===== 消息气泡 — 精致升级 ===== */
+  .bubble-self {
+    background: var(--imim-chat-self-bg);
+    border-radius: 20px 6px 20px 20px;
+    border: 1px solid rgba(237, 214, 110, 0.44);
+    box-shadow:
+      0 8px 18px rgba(167, 132, 30, 0.10),
+      inset 0 1px 0 rgba(255,255,255,0.55);
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .bubble-other {
+    background: var(--imim-chat-surface);
+    border-radius: 6px 20px 20px 20px;
+    border: 1px solid rgba(255,255,255,0.78);
+    box-shadow:
+      0 8px 18px rgba(94, 78, 125, 0.08),
+      0 1px 0 rgba(255,255,255,0.8) inset;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .tg-chat-shell {
+    position: relative;
+    overflow: hidden;
+    background: var(--imim-chat-shell-bg);
+  }
+  .tg-chat-shell::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240' fill='none' stroke='%23586e8c33' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='36' cy='40' r='18'/%3E%3Crect x='136' y='20' width='44' height='60' rx='10'/%3E%3Cpath d='M78 110c14-18 36-18 50 0c-14 18-36 18-50 0Z'/%3E%3Cpath d='M20 170l18-10l18 10l-18 10z'/%3E%3Cpath d='M168 144l18 18m-18 0l18-18'/%3E%3Cpath d='M110 174l10 20l22 3l-16 14l4 22l-20-11l-20 11l4-22l-16-14l22-3z'/%3E%3Crect x='34' y='112' width='24' height='24' rx='6'/%3E%3Cpath d='M194 50h24M206 38v24'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 240px 240px;
+    opacity: 0.16;
+    mix-blend-mode: multiply;
+    pointer-events: none;
+  }
+  .tg-chat-shell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08) 34%, rgba(255,255,255,0.02) 100%);
+    pointer-events: none;
+  }
+  .tg-chat-shell > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .tg-chat-topbar {
+    background: var(--imim-chat-topbar-bg);
+    border-bottom: 1px solid rgba(255,255,255,0.46);
+    backdrop-filter: blur(22px) saturate(190%);
+    -webkit-backdrop-filter: blur(22px) saturate(190%);
+    box-shadow: 0 10px 28px rgba(99, 85, 131, 0.10);
+  }
+
+  .tg-time-pill {
+    background: rgba(84, 151, 170, 0.78);
+    color: rgba(255,255,255,0.97);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 8px 18px rgba(79, 129, 156, 0.16);
+  }
+
+  .tg-chat-composer {
+    display: flex;
+    align-items: center;
+    min-height: 50px;
+    padding: 0.28rem 0.95rem;
+    border-radius: 999px;
+    background: var(--imim-chat-input-bg);
+    border: 1px solid var(--imim-chat-border);
+    box-shadow:
+      0 10px 24px rgba(93, 78, 124, 0.12),
+      inset 0 1px 0 rgba(255,255,255,0.76);
+    backdrop-filter: blur(20px) saturate(185%);
+    -webkit-backdrop-filter: blur(20px) saturate(185%);
+  }
+
+  .tg-chat-icon-btn {
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--imim-chat-input-bg);
+    border: 1px solid var(--imim-chat-border);
+    box-shadow: 0 10px 24px rgba(93, 78, 124, 0.12);
+    color: rgba(45, 52, 72, 0.82);
+    backdrop-filter: blur(20px) saturate(185%);
+    -webkit-backdrop-filter: blur(20px) saturate(185%);
+    transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  }
+  .tg-chat-icon-btn:hover {
+    background: rgba(255,255,255,0.90);
+    box-shadow: 0 14px 28px rgba(93, 78, 124, 0.16);
+  }
+
+  /* 移动端窄屏按钮缩小，防止底部溢出 */
+  @media (max-width: 480px) {
+    .tg-chat-icon-btn {
+      width: 34px;
+      height: 34px;
+    }
+    .tg-chat-send-btn {
+      width: 34px;
+      height: 34px;
+    }
+    .tg-chat-composer {
+      min-height: 40px;
+      padding: 0.15rem 0.6rem;
+    }
+  }
+
+  .tg-chat-send-btn {
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: white;
+    background: linear-gradient(180deg, #59c0ff, #349dff);
+    box-shadow: 0 12px 26px rgba(55, 159, 255, 0.32);
+  }
+
+  /* 消息气泡悬停效果 — GPU 友好 */
+  .bubble-self:hover,
+  .bubble-other:hover {
+    filter: brightness(0.97);
+    transition: filter 0.15s ease;
+  }
+
+  /* 消息气泡发送中状态 */
+  .bubble-sending {
+    opacity: 0.85;
+    transition: opacity 0.3s ease;
+  }
+  .bubble-sent {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+  }
+
+  /* ===== 统一搜索栏样式 ===== */
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.875rem;
+    background: oklch(0.94 0.004 80 / 0.7);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    border: 1.5px solid transparent;
+  }
+  .search-bar:focus-within {
+    background: oklch(1 0 0);
+    box-shadow:
+      0 4px 16px rgba(0,0,0,0.06),
+      0 1px 4px rgba(0,0,0,0.04);
+    border-color: oklch(0.58 0.14 155 / 0.2);
+  }
+  .search-bar input {
+    background: transparent;
+    font-size: 0.875rem;
+    flex: 1;
+    outline: none;
+    color: var(--foreground);
+  }
+  .search-bar input::placeholder {
+    color: oklch(0.52 0.01 60 / 0.5);
+  }
+
+  /* ===== 统一卡片样式 ===== */
+  .dove-card {
+    background: oklch(1 0 0);
+    border-radius: 1rem;
+    overflow: hidden;
+    box-shadow:
+      0 1px 3px rgba(0,0,0,0.04),
+      0 0 0 0.5px rgba(0,0,0,0.02);
+  }
+
+  /* ===== 统一列表项样式 ===== */
+  .dove-list-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    transition: background-color 0.15s ease;
+  }
+  .dove-list-item:hover {
+    background: oklch(0.975 0.003 90);
+  }
+  .dove-list-item:active {
+    background: oklch(0.94 0.004 80);
+  }
+
+  /* ===== 统一底部弹窗样式 ===== */
+  .dove-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .dove-sheet-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(4px);
+  }
+  .dove-sheet-content {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    background: oklch(0.985 0.004 90);
+    border-radius: 1.25rem 1.25rem 0 0;
+    z-index: 10;
+    box-shadow: 0 -8px 40px rgba(0,0,0,0.08);
+  }
+  .dove-sheet-handle {
+    width: 2.5rem;
+    height: 0.25rem;
+    border-radius: 9999px;
+    background: oklch(0.85 0.004 80);
+    margin: 0.625rem auto 0.25rem;
+  }
+
+  /* ===== 统一顶部导航栏 ===== */
+  .dove-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem 0.5rem;
+  }
+  .dove-topbar-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: oklch(0.22 0.012 60);
+    font-family: var(--font-wenkai);
+    letter-spacing: 0.02em;
+  }
+
+  /* ===== 统一图标按钮 ===== */
+  .dove-icon-btn {
+    width: 2.25rem;
+    height: 2.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.625rem;
+    transition: all 0.15s ease;
+  }
+  .dove-icon-btn:hover {
+    background: oklch(0.94 0.004 80);
+  }
+  .dove-icon-btn:active {
+    transform: scale(0.92);
+    background: oklch(0.92 0.004 80);
+  }
+
+  /* ===== 统一未读角标 ===== */
+  .dove-badge {
+    background: oklch(0.52 0.19 25);
+    color: white;
+    font-size: 0.625rem;
+    font-weight: 600;
+    border-radius: 9999px;
+    min-width: 1.125rem;
+    height: 1.125rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.25rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+
+  /* ===== 统一分割线 ===== */
+  .dove-divider {
+    height: 0.5px;
+    background: oklch(0.93 0.004 80 / 0.6);
+    margin-left: 4.75rem;
+  }
+
+  /* ===== 统一按钮样式 ===== */
+  .dove-btn-primary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, oklch(0.58 0.14 155), oklch(0.52 0.16 155));
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border-radius: 0.875rem;
+    box-shadow:
+      0 2px 8px oklch(0.58 0.14 155 / 0.25),
+      0 1px 2px rgba(0,0,0,0.06);
+    transition: all 0.2s ease;
+  }
+  .dove-btn-primary:hover {
+    box-shadow:
+      0 4px 16px oklch(0.58 0.14 155 / 0.3),
+      0 2px 4px rgba(0,0,0,0.08);
+    transform: translateY(-0.5px);
+  }
+  .dove-btn-primary:active {
+    transform: scale(0.98) translateY(0);
+  }
+  .dove-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .dove-btn-secondary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    background: oklch(0.94 0.004 80);
+    color: oklch(0.22 0.012 60);
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 0.875rem;
+    transition: all 0.15s ease;
+  }
+  .dove-btn-secondary:hover {
+    background: oklch(0.92 0.004 80);
+  }
+  .dove-btn-secondary:active {
+    transform: scale(0.98);
+  }
+
+  /* ===== 水墨涟漪动画 ===== */
+  @keyframes ink-ripple {
+    0% { transform: scale(0); opacity: 0.4; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  .ink-ripple {
+    animation: ink-ripple 0.6s ease-out;
+  }
+
+  /* ===== 消息浮入动画 ===== */
+  @keyframes float-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-float-up {
+    animation: float-up 0.3s ease-out;
+  }
+
+  /* ===== 页面滑入/滑出 ===== */
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  @keyframes slide-out-right {
+    from { transform: translateX(0); }
+    to { transform: translateX(100%); }
+  }
+  .animate-slide-in {
+    animation: slide-in-right 0.3s ease-out;
+  }
+  .animate-slide-out {
+    animation: slide-out-right 0.3s ease-in;
+  }
+
+  /* ===== 底部 Tab 指示器 ===== */
+  @keyframes tab-brush {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  .tab-indicator {
+    animation: tab-brush 0.25s ease-out;
+    transform-origin: left;
+  }
+
+  /* ===== 脉冲呼吸 ===== */
+  @keyframes gentle-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+  .animate-gentle-pulse {
+    animation: gentle-pulse 2s ease-in-out infinite;
+  }
+
+  /* ===== 下拉刷新 ===== */
+  @keyframes pull-refresh-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .pull-refresh-spinner {
+    animation: pull-refresh-spin 0.8s linear infinite;
+  }
+
+  /* ===== 渐入上浮 ===== */
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in-up {
+    animation: fade-in-up 0.4s ease-out;
+  }
+
+  /* ===== 缩放弹入 ===== */
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  .animate-scale-in {
+    animation: scale-in 0.25s ease-out;
+  }
+
+  /* ===== 抖动动画 ===== */
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+  }
+  .animate-shake {
+    animation: shake 0.3s ease-in-out;
+  }
+
+  /* ===== 呼吸光晕 ===== */
+  @keyframes glow-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 oklch(0.58 0.14 155 / 0.3); }
+    50% { box-shadow: 0 0 0 8px oklch(0.58 0.14 155 / 0); }
+  }
+  .animate-glow-pulse {
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  /* ===== 滑入从底部 ===== */
+  @keyframes slide-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+  .animate-slide-up {
+    animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ===== 微光扫过效果 ===== */
+  @keyframes shimmer-sweep {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* ===== 滚动条美化 ===== */
+  ::-webkit-scrollbar {
+    width: 3px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.88 0.004 80);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.80 0.004 80);
+  }
+
+  /* ===== 触摸反馈 ===== */
+  .touch-feedback {
+    transition: transform 0.1s ease, opacity 0.1s ease;
+  }
+  .touch-feedback:active {
+    transform: scale(0.97);
+    opacity: 0.8;
+  }
+
+  /* ===== 焚毁动画效果 ===== */
+  @keyframes burn-away {
+    0%   { opacity: 1; transform: scale(1) translateY(0); filter: blur(0px); }
+    30%  { opacity: 0.8; transform: scale(1.02) translateY(-2px); filter: blur(0px); }
+    60%  { opacity: 0.4; transform: scale(0.95) translateY(-6px); filter: blur(2px); }
+    100% { opacity: 0; transform: scale(0.7) translateY(-16px); filter: blur(6px); }
+  }
+  .animate-burn-away {
+    animation: burn-away 0.7s cubic-bezier(0.4, 0, 1, 1) forwards;
+    pointer-events: none;
+  }
+
+  /* ===== 火焰粒子 ===== */
+  @keyframes ember-float {
+    0%   { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+    100% { opacity: 0; transform: translateY(-30px) scale(0.3) rotate(180deg); }
+  }
+  .ember-particle {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: oklch(0.65 0.18 45);
+    animation: ember-float 0.8s ease-out forwards;
+    pointer-events: none;
+  }
+  .ember-particle:nth-child(2) { animation-delay: 0.05s; background: oklch(0.52 0.19 25); }
+  .ember-particle:nth-child(3) { animation-delay: 0.1s; background: oklch(0.75 0.15 60); }
+  .ember-particle:nth-child(4) { animation-delay: 0.15s; background: oklch(0.60 0.18 35); }
+  .ember-particle:nth-child(5) { animation-delay: 0.08s; background: oklch(0.50 0.15 20); }
+
+  /* ===== 沙漏脉冲 ===== */
+  @keyframes hourglass-pulse {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50%       { opacity: 1;   transform: scale(1.15); }
+  }
+  .animate-hourglass {
+    animation: hourglass-pulse 1s ease-in-out infinite;
+  }
+
+  /* ===== 消失消息闪烁 ===== */
+  @keyframes ephemeral-blink {
+    0%, 90%, 100% { opacity: 1; }
+    95%           { opacity: 0.3; }
+  }
+  .animate-ephemeral {
+    animation: ephemeral-blink 3s ease-in-out infinite;
+  }
+
+  /* ===== 防转发消息气泡 ===== */
+  .bubble-restricted {
+    position: relative;
+    overflow: hidden;
+  }
+  .bubble-restricted::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 8px,
+      oklch(0.52 0.19 25 / 0.04) 8px,
+      oklch(0.52 0.19 25 / 0.04) 9px
+    );
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  /* ===== 截屏警告 ===== */
+  .screenshot-notice {
+    background: oklch(0.52 0.19 25 / 0.08);
+    border: 1px solid oklch(0.52 0.19 25 / 0.2);
+    color: oklch(0.52 0.19 25);
+  }
+
+  /* ===== 骨架屏 — GPU 加速版 ===== */
+  @keyframes skeleton-shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      oklch(0.93 0.004 80) 25%,
+      oklch(0.97 0.003 80) 50%,
+      oklch(0.93 0.004 80) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s ease-in-out infinite;
+    border-radius: 8px;
+    will-change: background-position;
+  }
+
+  /* 聊天骨架屏 — 消息加载占位 */
+  .chat-skeleton-bubble {
+    display: flex;
+    gap: 8px;
+    padding: 6px 16px;
+    align-items: flex-start;
+  }
+  .chat-skeleton-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .chat-skeleton-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .chat-skeleton-line {
+    height: 12px;
+    border-radius: 6px;
+  }
+  .chat-skeleton-line-short {
+    width: 40%;
+  }
+  .chat-skeleton-line-medium {
+    width: 65%;
+  }
+  .chat-skeleton-line-long {
+    width: 85%;
+  }
+
+  /* ===== 话题标签 ===== */
+  .bg-dove-green\/8 {
+    background-color: oklch(0.58 0.14 155 / 0.08);
+  }
+  .hover\:bg-dove-green\/15:hover {
+    background-color: oklch(0.58 0.14 155 / 0.15);
+  }
+
+  /* ===== 页面切换过渡 ===== */
+  .page-enter {
+    animation: slide-in-right 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .page-exit {
+    animation: slide-out-right 0.22s ease-in;
+  }
+
+  /* ===== 在线状态指示器 ===== */
+  .status-dot {
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 9999px;
+    border: 2px solid oklch(0.985 0.004 90);
+    flex-shrink: 0;
+  }
+  .status-dot-online {
+    background: oklch(0.58 0.14 155);
+    box-shadow: 0 0 0 1px oklch(0.58 0.14 155 / 0.2);
+  }
+  .status-dot-busy {
+    background: oklch(0.75 0.15 80);
+  }
+  .status-dot-offline {
+    background: oklch(0.75 0.01 60);
+  }
+
+  /* ===== 玻璃态效果 ===== */
+  .glass-effect {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+  }
+
+  /* ===== 精致阴影层级 ===== */
+  .shadow-soft-sm {
+    box-shadow:
+      0 1px 2px rgba(0,0,0,0.04),
+      0 0 0 0.5px rgba(0,0,0,0.02);
+  }
+  .shadow-soft-md {
+    box-shadow:
+      0 2px 8px rgba(0,0,0,0.06),
+      0 1px 3px rgba(0,0,0,0.04);
+  }
+  .shadow-soft-lg {
+    box-shadow:
+      0 4px 16px rgba(0,0,0,0.08),
+      0 2px 6px rgba(0,0,0,0.04);
+  }
+
+  /* ===== 统一输入框 ===== */
+  .dove-input {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    background: oklch(0.94 0.004 80 / 0.5);
+    border-radius: 0.875rem;
+    font-size: 0.875rem;
+    outline: none;
+    border: 1.5px solid transparent;
+    transition: all 0.25s ease;
+    color: var(--foreground);
+  }
+  .dove-input::placeholder {
+    color: oklch(0.52 0.01 60 / 0.5);
+  }
+  .dove-input:focus {
+    background: oklch(1 0 0);
+    border-color: oklch(0.58 0.14 155 / 0.3);
+    box-shadow: 0 0 0 3px oklch(0.58 0.14 155 / 0.08);
+  }
+
+  /* ===== 统一设置页面样式 ===== */
+  .settings-page {
+    background: oklch(0.975 0.003 90);
+  }
+  .settings-group {
+    background: oklch(1 0 0);
+    border-radius: 1rem;
+    overflow: hidden;
+    box-shadow:
+      0 1px 3px rgba(0,0,0,0.03),
+      0 0 0 0.5px rgba(0,0,0,0.02);
+  }
+  .settings-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.875rem 1rem;
+    transition: background-color 0.15s ease;
+  }
+  .settings-item:hover {
+    background: oklch(0.975 0.003 90);
+  }
+  .settings-item:active {
+    background: oklch(0.96 0.003 90);
+  }
+  .settings-item + .settings-item {
+    border-top: 0.5px solid oklch(0.93 0.004 80 / 0.6);
+  }
+
+  /* ===== 响应式布局 — 平板/电脑端 ===== */
+
+  /* 响应式外壳：左侧导航 + 内容区 */
+  .responsive-shell {
+    display: flex;
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+    background: oklch(0.97 0.003 90);
+    position: relative;
+  }
+
+  /* 左侧导航栏 */
+  .side-nav {
+    display: flex;
+    flex-direction: column;
+    width: 72px;
+    height: 100dvh;
+    background: oklch(0.985 0.004 90);
+    border-right: 0.5px solid oklch(0.93 0.004 80);
+    flex-shrink: 0;
+    z-index: 10;
+    box-shadow: 1px 0 8px rgba(0,0,0,0.03);
+    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 宽屏导航栏 */
+  @media (min-width: 1200px) {
+    .side-nav {
+      width: 200px;
+    }
+  }
+
+  /* 导航栏头部 */
+  .side-nav-header {
+    padding: 1.25rem 0.75rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .side-nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    overflow: hidden;
+  }
+
+  .side-nav-logo-text {
+    font-size: 1rem;
+    font-weight: 600;
+    color: oklch(0.22 0.012 60);
+    font-family: var(--font-wenkai);
+    white-space: nowrap;
+    opacity: 0;
+    width: 0;
+    transition: opacity 0.3s ease, width 0.3s ease;
+  }
+
+  @media (min-width: 1200px) {
+    .side-nav-logo-text {
+      opacity: 1;
+      width: auto;
+    }
+  }
+
+  /* 导航项容器 */
+  .side-nav-items {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem 0.5rem;
+    overflow-y: auto;
+  }
+
+  /* 导航项 */
+  .side-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0.625rem 0.5rem;
+    border-radius: 0.75rem;
+    position: relative;
+    transition: background-color 0.15s ease;
+    cursor: pointer;
+    min-height: 56px;
+  }
+
+  .side-nav-item:hover {
+    background: oklch(0.94 0.004 80 / 0.6);
+  }
+
+  .side-nav-item-active {
+    background: oklch(0.96 0.025 155);
+  }
+
+  .side-nav-item-active:hover {
+    background: oklch(0.94 0.03 155);
+  }
+
+  /* 宽屏导航项横向排列 */
+  @media (min-width: 1200px) {
+    .side-nav-item {
+      flex-direction: row;
+      justify-content: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      min-height: 48px;
+    }
+  }
+
+  /* 导航项文字 */
+  .side-nav-label {
+    font-size: 0.625rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  @media (min-width: 1200px) {
+    .side-nav-label {
+      font-size: 0.875rem;
+    }
+  }
+
+  /* 导航活跃指示器 */
+  .side-nav-indicator {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 60%;
+    background: oklch(0.58 0.14 155);
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 6px oklch(0.58 0.14 155 / 0.4);
+  }
+
+  /* 导航栏底部 */
+  .side-nav-footer {
+    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-top: 0.5px solid oklch(0.93 0.004 80);
+  }
+
+  .side-nav-avatar-btn {
+    border-radius: 50%;
+    transition: opacity 0.15s ease;
+    cursor: pointer;
+  }
+
+  .side-nav-avatar-btn:hover {
+    opacity: 0.8;
+  }
+
+  /* 中间内容区 */
+  .responsive-content {
+    flex: 1;
+    height: 100dvh;
+    overflow: hidden;
+    background: var(--background);
+    border-right: 0.5px solid oklch(0.93 0.004 80);
+    min-width: 0;
+  }
+
+  /* 桌面端内容区宽度限制 */
+  @media (min-width: 1200px) {
+    .responsive-content {
+      max-width: 380px;
+      flex-shrink: 0;
+    }
+  }
+
+  /* 右侧聊天面板 */
+  .responsive-chat-panel {
+    flex: 1;
+    height: 100dvh;
+    overflow: hidden;
+    background: oklch(0.975 0.003 90);
+    min-width: 0;
+  }
+
+  /* 聊天面板空状态占位符 */
+  .responsive-chat-empty {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: oklch(0.975 0.003 90);
+  }
+
+  /* 平板端聊天覆盖层 */
+  .responsive-tablet-chat {
+    position: absolute;
+    top: 0;
+    left: 72px;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    background: var(--background);
+  }
+
+  /* 平板端导航栏宽度对应覆盖层偏移 */
+  @media (min-width: 1200px) {
+    .responsive-tablet-chat {
+      left: 200px;
+    }
+  }
+
+  /* 平板/电脑端：底部导航栏隐藏 */
+  @media (min-width: 768px) {
+    .bottom-tab-bar-hide-on-tablet {
+      display: none;
+    }
+  }
+
+  /* 平板/电脑端：应用外壳无限宽 */
+  @media (min-width: 768px) {
+    .responsive-shell .app-shell {
+      max-width: none;
+    }
+  }
+
+  /* 桌面端聊天详情页的返回按鈕隐藏 */
+  @media (min-width: 1200px) {
+    .desktop-hide-back-btn {
+      display: none;
+    }
+  }
+
+  /* 桌面端消息气泡最大宽度 */
+  @media (min-width: 1200px) {
+    .bubble-self,
+    .bubble-other {
+      max-width: 520px;
+    }
+  }
+}
+
+/* ===== 暗色模式 CSS 变量 ===== */
+.dark {
+  --background: oklch(0.12 0.008 240);
+  --foreground: oklch(0.92 0.005 240);
+  --card: oklch(0.16 0.008 240);
+  --card-foreground: oklch(0.92 0.005 240);
+  --popover: oklch(0.16 0.008 240);
+  --popover-foreground: oklch(0.92 0.005 240);
+  --primary: oklch(0.62 0.14 155);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.20 0.008 240);
+  --secondary-foreground: oklch(0.80 0.005 240);
+  --muted: oklch(0.20 0.008 240);
+  --muted-foreground: oklch(0.55 0.005 240);
+  --accent: oklch(0.22 0.01 155);
+  --accent-foreground: oklch(0.92 0.005 240);
+  --destructive: oklch(0.55 0.20 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.25 0.008 240);
+  --input: oklch(0.22 0.008 240);
+  --ring: oklch(0.62 0.14 155);
+  --sidebar: oklch(0.14 0.008 240);
+  --sidebar-foreground: oklch(0.85 0.005 240);
+  --sidebar-accent: oklch(0.22 0.01 155);
+  --sidebar-accent-foreground: oklch(0.92 0.005 240);
+  --sidebar-border: oklch(0.25 0.008 240);
+  --sidebar-ring: oklch(0.62 0.14 155);
+  /* DoveIM 自定义色彩 — 暗色版 */
+  --color-dove-green: oklch(0.62 0.14 155);
+  --color-dove-green-light: oklch(0.22 0.03 155);
+  --color-dove-ink: oklch(0.90 0.005 240);
+  --color-dove-paper: oklch(0.16 0.008 240);
+  --color-dove-warm-gray: oklch(0.22 0.008 240);
+  --color-dove-mist: oklch(0.18 0.006 240);
+  --color-dove-bamboo: oklch(0.55 0.09 155);
+  --color-dove-seal: oklch(0.60 0.19 25);
+  /* CQIM 聊天主路径暗色 token */
+  --imim-chat-shell-bg: linear-gradient(180deg, rgba(18, 35, 52, 0.98) 0%, rgba(32, 60, 87, 0.96) 28%, rgba(58, 40, 82, 0.96) 68%, rgba(29, 31, 50, 0.98) 100%);
+  --imim-chat-topbar-bg: rgba(15, 23, 35, 0.76);
+  --imim-chat-input-bg: rgba(15, 23, 35, 0.80);
+  --imim-chat-surface: rgba(21, 30, 44, 0.95);
+  --imim-chat-self-bg: linear-gradient(180deg, rgba(73, 107, 129, 0.96), rgba(55, 88, 109, 0.98));
+  --imim-chat-border: rgba(255, 255, 255, 0.08);
+}
+
+/* 暗色模式下的气泡样式 */
+.dark .bubble-self {
+  background: linear-gradient(180deg, rgba(73, 107, 129, 0.96), rgba(55, 88, 109, 0.98));
+  border-color: rgba(114, 186, 220, 0.18);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.dark .bubble-other {
+  background: rgba(21, 30, 44, 0.95);
+  border-color: rgba(255,255,255,0.07);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.23), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.dark .tg-chat-shell {
+  background: linear-gradient(180deg, rgba(18, 35, 52, 0.98) 0%, rgba(32, 60, 87, 0.96) 28%, rgba(58, 40, 82, 0.96) 68%, rgba(29, 31, 50, 0.98) 100%);
+}
+.dark .tg-chat-shell::before {
+  opacity: 0.10;
+  mix-blend-mode: screen;
+}
+.dark .tg-chat-shell::after {
+  background: linear-gradient(180deg, rgba(6,10,18,0.16), rgba(6,10,18,0.08) 38%, rgba(6,10,18,0.22) 100%);
+}
+.dark .tg-chat-topbar {
+  background: rgba(15, 23, 35, 0.76);
+  border-bottom-color: rgba(255,255,255,0.08);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.26);
+}
+.dark .tg-time-pill {
+  background: rgba(46, 102, 130, 0.78);
+  color: rgba(255,255,255,0.92);
+}
+.dark .tg-chat-composer,
+.dark .tg-chat-icon-btn {
+  background: rgba(15, 23, 35, 0.80);
+  border-color: rgba(255,255,255,0.08);
+  color: rgba(226,232,240,0.90);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.24);
+}
+.dark .tg-chat-send-btn {
+  box-shadow: 0 12px 26px rgba(55, 159, 255, 0.22);
+}
+
+/* 暗色模式下的导航栏 */
+.dark .side-nav {
+  background: oklch(0.14 0.008 240);
+  border-right-color: oklch(0.25 0.008 240);
+}
+.dark .responsive-shell {
+  background: oklch(0.12 0.008 240);
+}
+.dark .responsive-chat-empty {
+  background: oklch(0.13 0.008 240);
+}
+
+/* 暗色模式下的设置页 */
+.dark .settings-page {
+  background: oklch(0.12 0.008 240);
+}
+.dark .settings-group {
+  background: oklch(0.16 0.008 240);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2), 0 0 0 0.5px rgba(255,255,255,0.04);
+}
+.dark .settings-item:hover {
+  background: oklch(0.20 0.008 240);
+}
+.dark .settings-item + .settings-item {
+  border-top-color: oklch(0.25 0.008 240 / 0.6);
+}
+
+/* 暗色模式下的输入框 */
+.dark .dove-input {
+  background: oklch(0.20 0.008 240);
+  border-color: oklch(0.28 0.008 240);
+  color: oklch(0.92 0.005 240);
+}
+.dark .dove-input:focus {
+  background: oklch(0.22 0.008 240);
+  border-color: oklch(0.62 0.14 155 / 0.4);
+  box-shadow: 0 0 0 3px oklch(0.62 0.14 155 / 0.12);
+}
+
+/* 暗色模式下的卡片 */
+.dark .dove-card {
+  background: oklch(0.18 0.008 240);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2), 0 0 0 0.5px rgba(255,255,255,0.04);
+}
+
+/* 暗色模式下的顶部栏 */
+.dark .dove-topbar {
+  background: oklch(0.14 0.008 240 / 0.95);
+  border-bottom-color: oklch(0.25 0.008 240);
+}
+
+/* 暗色模式下的底部导航 */
+.dark .dove-bottom-nav {
+  background: oklch(0.14 0.008 240 / 0.95);
+  border-top-color: oklch(0.25 0.008 240);
+}
+
+/* 暗色模式下的 sheet 弹窗 */
+.dark .dove-sheet-content {
+  background: oklch(0.16 0.008 240);
+}
+.dark .dove-sheet-backdrop {
+  background: rgba(0,0,0,0.7);
+}
+
+/* 暗色模式下的 app-shell 背景 */
+.dark .app-shell {
+  background: oklch(0.12 0.008 240);
+}
+
+/* ===== 暗色模式全局补丁 — 覆盖所有硬编码白色区域 ===== */
+
+/* 底部 Tab 导航栏（glass-effect 硬编码白色修复） */
+.dark .glass-effect {
+  background: oklch(0.14 0.008 240 / 0.95) !important;
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+
+/* 搜索栏暗色 */
+.dark .search-bar {
+  background: oklch(0.20 0.008 240 / 0.8);
+  border-color: oklch(0.28 0.008 240 / 0.5);
+}
+.dark .search-bar:focus-within {
+  background: oklch(0.22 0.008 240);
+  border-color: oklch(0.62 0.14 155 / 0.3);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.2);
+}
+.dark .search-bar input::placeholder {
+  color: oklch(0.55 0.005 240 / 0.6);
+}
+
+/* 消息气泡（对方）已在上面定义，此处补充 */
+.dark .bubble-other {
+  background: oklch(0.20 0.008 240) !important;
+}
+
+/* dove-card 暗色 */
+.dark .dove-card {
+  background: oklch(0.18 0.008 240) !important;
+}
+
+/* dove-sheet-content 暗色 */
+.dark .dove-sheet-content {
+  background: oklch(0.16 0.008 240) !important;
+}
+.dark .dove-sheet-handle {
+  background: oklch(0.30 0.008 240);
+}
+
+/* dove-topbar 标题文字 */
+.dark .dove-topbar-title {
+  color: oklch(0.92 0.005 240);
+}
+
+/* dove-icon-btn 暗色 */
+.dark .dove-icon-btn:hover {
+  background: oklch(0.24 0.008 240);
+}
+.dark .dove-icon-btn:active {
+  background: oklch(0.22 0.008 240);
+}
+
+/* dove-list-item 暗色 */
+.dark .dove-list-item:hover {
+  background: oklch(0.20 0.008 240);
+}
+.dark .dove-list-item:active {
+  background: oklch(0.22 0.008 240);
+}
+
+/* dove-divider 暗色 */
+.dark .dove-divider {
+  background: oklch(0.25 0.008 240 / 0.6);
+}
+
+/* 全局 bg-white 覆盖 */
+.dark .bg-white {
+  background-color: oklch(0.16 0.008 240) !important;
+}
+.dark .bg-white\/80,
+.dark .bg-white\/90,
+.dark .bg-white\/95 {
+  background-color: oklch(0.16 0.008 240 / 0.95) !important;
+}
+
+/* 弹出菜单/下拉框 */
+.dark [role="menu"],
+.dark [data-radix-popper-content-wrapper] > div {
+  background: oklch(0.18 0.008 240) !important;
+  border-color: oklch(0.25 0.008 240) !important;
+}
+
+/* 通用 body/root 背景 */
+.dark body {
+  background-color: oklch(0.12 0.008 240) !important;
+}
+
+/* 聊天输入栏区域 */
+.dark .chat-input-bar,
+.dark [class*="chat-input"] {
+  background: oklch(0.16 0.008 240);
+  border-top-color: oklch(0.25 0.008 240);
+}
+
+/* ===== 暗色模式全局文字颜色覆盖 ===== */
+
+/* 全局文字颜色 */
+.dark body,
+.dark #root {
+  color: oklch(0.92 0.005 240) !important;
+}
+
+/* dove-topbar 标题文字 */
+.dark .dove-topbar-title {
+  color: oklch(0.95 0.005 240) !important;
+}
+
+/* 搜索框 placeholder */
+.dark .search-bar input::placeholder {
+  color: oklch(0.55 0.005 240 / 0.6) !important;
+}
+
+/* 次级按钮文字 */
+.dark .dove-btn-secondary {
+  background: oklch(0.22 0.008 240);
+  color: oklch(0.88 0.005 240);
+}
+
+/* 侧边栏 logo 文字 */
+.dark .side-nav-logo-text {
+  color: oklch(0.92 0.005 240);
+}
+
+/* 硬编码深色文字全局覆盖（text-dove-ink 等） */
+.dark .text-dove-ink {
+  color: oklch(0.92 0.005 240) !important;
+}
+
+/* Tailwind 灰色文字类覆盖 */
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-gray-600 {
+  color: oklch(0.88 0.005 240) !important;
+}
+.dark .text-gray-500,
+.dark .text-gray-400 {
+  color: oklch(0.65 0.005 240) !important;
+}
+.dark .text-zinc-900,
+.dark .text-zinc-800,
+.dark .text-zinc-700,
+.dark .text-zinc-600 {
+  color: oklch(0.88 0.005 240) !important;
+}
+.dark .text-zinc-500,
+.dark .text-zinc-400 {
+  color: oklch(0.65 0.005 240) !important;
+}
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700,
+.dark .text-slate-600 {
+  color: oklch(0.88 0.005 240) !important;
+}
+.dark .text-neutral-900,
+.dark .text-neutral-800,
+.dark .text-neutral-700 {
+  color: oklch(0.88 0.005 240) !important;
+}
+.dark .text-black {
+  color: oklch(0.92 0.005 240) !important;
+}
+
+/* 消息列表中的聊天名称、时间、预览文字 */
+.dark .text-foreground {
+  color: oklch(0.92 0.005 240) !important;
+}
+.dark .text-muted-foreground {
+  color: oklch(0.60 0.005 240) !important;
+}
+
+/* 通讯录/设置页面标题和副标题 */
+.dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 {
+  color: oklch(0.95 0.005 240);
+}
+
+/* 设置页面文字 */
+.dark .settings-item {
+  color: oklch(0.90 0.005 240);
+}
+
+/* 聊天消息文字 */
+.dark .bubble-self {
+  color: oklch(0.95 0.005 240);
+}
+.dark .bubble-other {
+  color: oklch(0.92 0.005 240);
+}
+
+/* 输入框文字 */
+.dark input,
+.dark textarea {
+  color: oklch(0.92 0.005 240) !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: oklch(0.50 0.005 240 / 0.7) !important;
+}
+
+/* 截图警告 */
+.dark .screenshot-notice {
+  color: oklch(0.75 0.12 25);
+}
+
+/* 通用 p、span、label 等文字 */
+.dark p,
+.dark span:not([class*="text-dove-green"]):not([class*="text-green"]):not([class*="badge"]):not([class*="status"]) {
+  color: inherit;
+}
+
+/* 确保所有 oklch(0.22) 深色文字在暗色模式下变亮 */
+.dark [style*="color: oklch(0.22"] {
+  color: oklch(0.92 0.005 240) !important;
+}

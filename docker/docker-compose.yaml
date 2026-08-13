@@ -1,0 +1,403 @@
+version: '3.1'
+services:
+  wukongim:  # 唐僧叨叨通讯服务（悟空IM）
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/wukongim:v2
+    restart: always
+    ports:
+      # - "5001:5001" # http api端口（业务端调用，仅限内网开放）
+      - "5100:5100"  # tcp长连接端口（外网开放）
+      - "5200:5200" # websocket端口（外网开放）
+      - "5300:5300" # 监控端口
+    volumes:
+      - ./wukongim:/root/wukongim
+    env_file:
+      - .env
+    environment:
+      - WK_EXTERNAL_IP=${EXTERNAL_IP}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "5001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  tangsengdaodaoserver:  # 唐僧叨叨的业务服务
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/tangsengdaodaoserver:v1.5
+    restart: always
+    command: "api"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8090/v1/ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wukongim:
+        condition: service_started
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./tsdd:/home/tsdddata
+      - ./tsdd/configs:/home/configs
+    env_file:
+      - .env
+    environment:
+      - TS_DB_MYSQLADDR=root:${MYSQL_ROOT_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=Local&timeout=10s&readTimeout=30s&writeTimeout=30s
+      - TS_EXTERNAL_IP=${EXTERNAL_IP}
+      - TS_FILESERVICE=${TS_FILESERVICE}
+      - TS_MINIO_ACCESSKEYID=${MINIO_ROOT_USER}
+      - TS_MINIO_SECRETACCESSKEY=${MINIO_ROOT_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  tangsengdaodaoweb:  # 唐僧叨叨的web服务
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/tangsengdaodaoweb:latest
+    restart: always
+    environment:
+      - API_URL=http://tangsengdaodaoserver:8090/
+    ports:
+      - "82:80"
+    depends_on:
+      tangsengdaodaoserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  tangsengdaodaomanager:  # 唐僧叨叨的后台管理系统
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/tangsengdaodaomanager:latest
+    restart: always
+    environment:
+      - API_URL=http://tangsengdaodaoserver:8090/
+    ports:
+      - "83:80"
+    depends_on:
+      tangsengdaodaoserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  minio:  # minio文件管理服务
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/minio:RELEASE.2023-07-18T17-49-40Z
+    command: "server /data --console-address ':9001'"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./miniodata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  mysql:  # mysql数据库
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/mysql:8.0.33
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=200
+      - --max_allowed_packet=64M
+      - --innodb_buffer_pool_size=256M
+      - --innodb_log_file_size=128M
+      - --slow_query_log=1
+      - --slow_query_log_file=/var/log/mysql/slow.log
+      - --long_query_time=2
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - ./mysqldata:/var/lib/mysql
+    environment:
+      - TZ=Asia/Shanghai
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  redis:  # redis
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/redis:7.2.3
+    restart: always
+    command:
+      - redis-server
+      - --appendonly yes
+      - --maxmemory 128mb
+      - --maxmemory-policy allkeys-lru
+      - --save 900 1
+      - --save 300 10
+      - --save 60 10000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - ./redisdata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  adminer:  # mysql web管理工具（调试用，生产环境建议关闭）
+    image: registry.cn-shanghai.aliyuncs.com/wukongim/adminer:latest
+    ports:
+      - 127.0.0.1:8306:8080
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "2"
+
+  register:  # imimchat 安全注册中间件
+    build:
+      context: ../register-service
+      dockerfile: Dockerfile
+    image: imimchat-register:latest
+    container_name: imimchat-register
+    restart: always
+    ports:
+      - "9091:9091"
+    environment:
+      - TSDD_API=http://tangsengdaodaoserver:8090
+      - TSDD_SMSCODE=${TS_SMSCODE:-123456}
+      - SMS_PROVIDER=${SMS_PROVIDER:-mock}
+      - ALIYUN_ACCESS_KEY=${ALIYUN_ACCESS_KEY:-}
+      - ALIYUN_ACCESS_SECRET=${ALIYUN_ACCESS_SECRET:-}
+      - ALIYUN_DYPNS_SIGN_NAME=${ALIYUN_DYPNS_SIGN_NAME:-速通互联验证码}
+      - ALIYUN_DYPNS_TEMPLATE_CODE=${ALIYUN_DYPNS_TEMPLATE_CODE:-100001}
+      - TRTC_SDK_APP_ID=${TRTC_SDK_APP_ID:-}
+      - TRTC_SECRET_KEY=${TRTC_SECRET_KEY:-}
+      - TRTC_USER_SIG_EXPIRE=${TRTC_USER_SIG_EXPIRE:-604800}
+      - SERVICE_PORT=9091
+    depends_on:
+      tangsengdaodaoserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9091/register/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ==================== CQIM 自研 IM 应用服务 ====================
+
+  mongo:  # MongoDB（cqim 主业务数据库）
+    image: mongo:7
+    container_name: cqim-mongo
+    restart: unless-stopped
+    command: ["mongod", "--bind_ip_all"]
+    ports:
+      - "${CQIM_MONGO_PORT:-27017}:27017"
+    volumes:
+      - ./mongodata:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${CQIM_MONGO_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.runCommand({ping:1}).ok\" | grep 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  cqim:  # CQIM Node.js 全栈应用（Express + React）
+    build:
+      context: ../cqim-app
+      dockerfile: Dockerfile
+    image: cqim:latest
+    container_name: cqim-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      mongo:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=${CQIM_DATABASE_URL:-mongodb://root:${CQIM_MONGO_ROOT_PASSWORD}@mongo:27017/cqim?authSource=admin}
+      - REDIS_URL=redis://redis:6379
+      - MYSQL_URL=${CQIM_MYSQL_URL:-mysql://cqim:cqim@mysql:3306/cqim_audit}
+      - MYSQL_AUDIT_ENABLED=${CQIM_MYSQL_AUDIT_ENABLED:-true}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - AI_MODEL=${AI_MODEL:-gpt-4.1-mini}
+      - ONEBOT_ACCESS_TOKEN=${ONEBOT_ACCESS_TOKEN:-}
+    volumes:
+      - ./cqim-data:/app/prisma/data
+      - ./cqim-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  cqim-gateway:  # CQIM Go 网关（群聊 WebSocket）
+    build:
+      context: ../cqim-app/go-gateway
+      dockerfile: Dockerfile
+    image: cqim-gateway:latest
+    container_name: cqim-gateway
+    restart: unless-stopped
+    ports:
+      - "${CQIM_GATEWAY_PORT:-8081}:8081"
+    depends_on:
+      cqim:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - GATEWAY_PORT=8081
+      - CQIM_API_URL=http://cqim:3000
+      - REDIS_ADDR=redis:6379
+      - DB_PATH=/app/data/gateway.db
+    volumes:
+      - ./cqim-gateway-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
