@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { initTelemetry, setTelemetryUser, Sentry } from '@/lib/telemetry';
 
 const CHUNK_RECOVERY_MARKER = "cqim-chunk-recovery";
 
@@ -78,7 +79,14 @@ function registerChunkRecovery() {
   });
 }
 
+initTelemetry();
+setTelemetryUser(localStorage.getItem('user_id') || localStorage.getItem('userId') || undefined);
 injectAnalyticsScript();
 registerChunkRecovery();
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = createRoot(document.getElementById("root")!);
+root.render(
+  <Sentry.ErrorBoundary fallback={<div className="flex min-h-screen items-center justify-center p-6 text-center text-sm text-muted-foreground">页面发生异常，请刷新后重试</div>}>
+    <App />
+  </Sentry.ErrorBoundary>,
+);

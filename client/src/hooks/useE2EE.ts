@@ -9,6 +9,7 @@ import {
   type SessionInfo,
   type SignalEnvelope,
 } from '@/lib/e2ee';
+import { trackE2EEFailure } from '@/lib/telemetry';
 
 interface UseE2EEReturn {
   /** E2EE 是否已初始化 */
@@ -92,6 +93,7 @@ export function useE2EE(): UseE2EEReturn {
       return await manager.encrypt(peerId, plaintext);
     } catch (err) {
       console.error('[useE2EE] 加密失败:', err);
+      trackE2EEFailure('encrypt', { error: err, chatId: peerId, direction: 'outbound' });
       return null;
     }
   }, []);
@@ -103,6 +105,7 @@ export function useE2EE(): UseE2EEReturn {
       return await manager.decrypt(peerId, envelope);
     } catch (err) {
       console.error('[useE2EE] 解密失败:', err);
+      trackE2EEFailure('decrypt', { error: err, chatId: peerId, direction: 'inbound' });
       return null;
     }
   }, []);

@@ -11,6 +11,7 @@
  */
 
 import { SignalStore, type KeyPairB64, type SessionRecord } from './SignalStore';
+import { clearDecryptedMessageCache } from '@/lib/localdb';
 import {
   generateKeyPair,
   exportKeyPair,
@@ -807,6 +808,8 @@ export class E2EEManager {
   /** 重置所有数据（退出登录） */
   async resetAll(): Promise<void> {
     await this.store.clearAll();
+    const ownerId = typeof localStorage !== 'undefined' ? localStorage.getItem('user_id') || undefined : undefined;
+    await clearDecryptedMessageCache(ownerId);
     this._initialized = false;
     this._registrationId = 0;
     this._identityKeyPair = null;

@@ -12,6 +12,8 @@ import {
   type BurnAfterReadTimer, BURN_TIMER_OPTIONS, formatBurnTimer,
 } from '@/lib/store';
 import { useE2EE } from '@/hooks/useE2EE';
+import { loadPrivateMessagesFromLocalDb } from '@/lib/localdb';
+import { trackE2EEFailure, trackEvent } from '@/lib/telemetry';
 import { useVoiceMessage } from '@/hooks/useVoiceMessage';
 import { VoiceMessageBubble, RecordingPreview } from '@/components/VoiceMessageBubble';
 import { BotVoiceBubble } from '@/components/BotVoiceBubble';
@@ -119,7 +121,7 @@ export default function ChatDetailPage() {
     closeChat, sendMessage, addReaction, startCall,
     markMessageRead, burnMessage, setEphemeralTimer, insertScreenshotNotice,
     insertCallRecord, recallMessage, setMessages, upsertChat,
-    muteChat, clearMessages, pinChat, showProfile,
+    muteChat, clearMessages, pinChat, showProfile, updateMessageStatus,
   } = useAppActions();
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
@@ -285,30 +287,42 @@ export default function ChatDetailPage() {
       .catch(() => {});
   }, [otherMember, chatId]);
 
-  // ===== 进入会话时从 API 加载历史消息 =====
+  // ===== 本地秒开 + 后台同步私聊历史 =====
   useEffect(() => {
     if (!chatId || chatId === 'c0' || chatId === 'cBOT') return;
-    // 如果已有消息，不重复加载
-    if (state.messages[chatId]?.length) return;
-
     const token = localStorage.getItem('user_token');
     if (!token) return;
+    let cancelled = false;
 
-    setLoadingMessages(true);
-    fetch(`/api/chat/${chatId}/messages?limit=50`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(async data => {
-        if (!data?.messages) return;
-        
+    const mergeMessages = (base: Message[], incoming: Message[]) => {
+      const byId = new Map<string, Message>();
+      for (const message of [...base, ...incoming]) byId.set(message.id, message);
+      return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
+    };
+
+    (async () => {
+      try {
+        const localMessages = await loadPrivateMessagesFromLocalDb(chatId, currentUserId);
+        if (cancelled) return;
+        const current = state.messages[chatId] || [];
+        const cached = localMessages.length > 0 ? mergeMessages(current, localMessages) : current;
+        if (localMessages.length > 0 && current.length === 0) setMessages(chatId, cached);
+        setLoadingMessages(cached.length === 0);
+
+        const response = await fetch(`/api/chat/${chatId}/messages?limit=50`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error(`history_${response.status}`);
+        const data = await response.json();
+        if (!data?.messages || cancelled) return;
+
         const msgs: Message[] = await Promise.all(data.messages.map(async (m: any) => {
           let decryptedContent = m.isRevoked ? '消息已撤回' : (m.content || '');
           let finalMsgType = m.msgType || 'text';
           let finalExtra = typeof m.extra === 'string' ? JSON.parse(m.extra) : m.extra;
           let decryptionFailed = false;
+          let decryptionStatus: Message['decryptionStatus'] = 'decrypted';
 
-          // P0: 历史消息解密，非加密明文消息打上不支持占位
           if (m.msgType === 'encrypted' && m.content && !m.isRevoked) {
             try {
               const envelope = JSON.parse(m.content);
@@ -319,23 +333,29 @@ export default function ChatDetailPage() {
               finalExtra = { ...finalExtra, ...decrypted.extra };
             } catch (err) {
               console.error('[E2EE] 历史消息解密失败:', err);
+              trackE2EEFailure('decrypt', { chatId, msgType: m.msgType, error: err, direction: 'inbound' });
               decryptedContent = '🔒 无法解密历史消息';
               decryptionFailed = true;
+              decryptionStatus = 'failed';
             }
           } else if (m.msgType !== 'encrypted' && !m.isRevoked) {
             decryptedContent = '⚠️ [不支持的旧明文消息]';
             decryptionFailed = true;
+            decryptionStatus = 'legacy';
           }
 
           return {
             id: m.id,
             chatId: m.chatId,
+            cursor: m.id,
             senderId: m.senderId,
             content: decryptedContent,
             type: finalMsgType as any,
             timestamp: m.createdAt || Date.now(),
-            isEncrypted: true,
+            isEncrypted: m.msgType === 'encrypted',
             decryptionFailed,
+            decryptionStatus,
+            direction: m.senderId === currentUserId ? 'outbound' as const : 'inbound' as const,
             reactions: {},
             status: m.status || 'sent',
             isRecalled: m.isRevoked || false,
@@ -349,13 +369,21 @@ export default function ChatDetailPage() {
           };
         }));
 
-        setMessages(chatId, msgs);
-        setHasMoreMessages(data.hasMore || false);
-      })
-      .catch(err => console.error('[ChatDetail] 加载消息失败:', err))
-      .finally(() => setLoadingMessages(false));
+        if (!cancelled) {
+          setMessages(chatId, mergeMessages(cached, msgs));
+          setHasMoreMessages(data.hasMore || false);
+          trackEvent('private_history_sync', { chatId, count: msgs.length, direction: 'inbound' });
+        }
+      } catch (err) {
+        if (!cancelled) console.error('[ChatDetail] 加载消息失败:', err);
+      } finally {
+        if (!cancelled) setLoadingMessages(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId]);
+  }, [chatId, currentUserId]);
 
   // 检查会话状态
   useEffect(() => {
@@ -746,13 +774,24 @@ export default function ChatDetailPage() {
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
               body: JSON.stringify({ content: envelopeStr, msgType: 'encrypted', ...(effectiveBurnTimer ? { burnAfterRead: effectiveBurnTimer } : {}), ...(msgHmac ? { hmac: msgHmac } : {}), ...(activeReply ? { replyToId: activeReply.id } : {}) }),
             })
-              .then(r => r.ok ? r.json() : null)
-              .then(data => { if (data?.message) dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId: encTempId, realId: data.message.id }); });
+              .then(async r => {
+                if (!r.ok) throw new Error(`send_${r.status}`);
+                return r.json();
+              })
+              .then(data => { if (data?.message) dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId: encTempId, realId: data.message.id }); })
+              .catch(err => {
+                updateMessageStatus(chatId, encTempId, 'failed');
+                trackEvent('message_send_failed', { chatId, msgType: 'encrypted', error: err, direction: 'outbound' });
+              });
+          } else {
+            updateMessageStatus(chatId, encTempId, 'failed');
           }
         }
         return;
       } catch (err: any) {
         console.error('[E2EE] 发送失败:', err);
+        trackE2EEFailure(err?.message?.includes('Bundle') || err?.message?.includes('安全凭证') ? 'bundle' : 'encrypt', { chatId, msgType: 'encrypted', error: err, direction: 'outbound' });
+        trackEvent('message_send_failed', { chatId, msgType: 'encrypted', error: err, direction: 'outbound' });
         toast.error(`无法建立加密连接: ${err.message}`);
         addLog(`❌ E2EE 错误: ${err.message}`);
         return;

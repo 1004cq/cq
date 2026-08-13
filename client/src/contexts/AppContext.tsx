@@ -18,11 +18,13 @@ import {
 import { useFCM } from '@/hooks/useFCM';
 import { useJPush } from '@/hooks/useJPush';
 import { authApi } from '@/lib/authFetch';
+import { trackE2EEFailure, trackEvent, setTelemetryUser } from '@/lib/telemetry';
 import {
   loadChatsFromLocalDb,
   loadPrivateMessagesFromLocalDb,
   persistChats,
   persistPrivateMessages,
+  clearDecryptedMessageCache,
 } from '@/lib/localdb';
 
 export interface AuthUser {
@@ -109,6 +111,7 @@ type Action =
   | { type: 'UPSERT_CHAT'; chat: Chat }
   /** 替换临时消息ID为服务器真实ID */
   | { type: 'REPLACE_MESSAGE_ID'; chatId: string; tempId: string; realId: string }
+  | { type: 'UPDATE_MESSAGE_STATUS'; chatId: string; messageId: string; status: Message['status'] }
   // ===== 消息防篡改 Actions =====
   /** 更新消息完整性验证状态 */
   | { type: 'UPDATE_MESSAGE_INTEGRITY'; chatId: string; messageId: string; integrityStatus: 'verified' | 'tampered' | 'unverified' }
@@ -554,6 +557,16 @@ function reducer(state: AppState, action: Action): AppState {
         chats: dedupeChats([...state.chats, action.chat]),
       };
     }
+    case 'UPDATE_MESSAGE_STATUS': {
+      const msgs = state.messages[action.chatId] || [];
+      return {
+        ...state,
+        messages: {
+          ...state.messages,
+          [action.chatId]: msgs.map(m => m.id === action.messageId ? { ...m, status: action.status } : m),
+        },
+      };
+    }
     case 'REPLACE_MESSAGE_ID': {
       const msgs = state.messages[action.chatId] || [];
       return {
@@ -766,7 +779,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!state.isLoggedIn || !state.currentChatId) return;
     if ((state.messages[state.currentChatId] || []).length > 0) return;
 
-    void loadPrivateMessagesFromLocalDb(state.currentChatId)
+    void loadPrivateMessagesFromLocalDb(state.currentChatId, state.currentUser?.id || CURRENT_USER.id)
       .then((localMessages) => {
         if (localMessages.length > 0) {
           dispatch({ type: 'SET_MESSAGES', chatId: state.currentChatId as string, messages: localMessages });
@@ -780,7 +793,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!state.isLoggedIn) return;
     const allMessages = Object.values(state.messages).flat();
     if (allMessages.length === 0) return;
-    void persistPrivateMessages(allMessages).catch((err) => console.error('[AppContext] 本地私聊消息持久化失败:', err));
+    void persistPrivateMessages(allMessages, state.currentUser?.id || CURRENT_USER.id).catch((err) => console.error('[AppContext] 本地私聊消息持久化失败:', err));
   }, [state.isLoggedIn, state.messages]);
 
   const notifyIncomingMessage = useCallback((chatId: string, message: Message) => {
@@ -1006,6 +1019,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     finalExtra = { ...extra, ...decrypted.extra };
                   } catch (err) {
                     console.error('[E2EE] 解密失败:', err);
+                    trackE2EEFailure('decrypt', { chatId, msgType, error: err, direction: 'inbound' });
                     decryptedContent = '🔒 无法解密消息，请重置安全会话';
                     decryptionFailed = true;
                   }
@@ -1017,6 +1031,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 const newMsg: Message = {
                   id,
                   chatId,
+                  cursor: id,
                   senderId,
                   content: decryptedContent,
                   type: finalMsgType as any,
@@ -1027,6 +1042,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   isRecalled: isRevoked || false,
                   replyTo: replyToId || undefined,
                   decryptionFailed,
+                  decryptionStatus: decryptionFailed ? 'failed' : 'decrypted',
+                  direction: 'inbound',
                   ...(finalExtra?.voiceUrl ? { voiceUrl: finalExtra.voiceUrl, duration: finalExtra.duration || 0 } : {}),
                   ...(finalExtra?.imageUrl ? { imageUrl: finalExtra.imageUrl } : {}),
                   ...(finalExtra?.videoUrl ? { videoUrl: finalExtra.videoUrl } : {}),
@@ -1254,6 +1271,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
 
        ws.onclose = () => {
+        trackEvent('ws_reconnect', { code: 'signal_socket_closed' });
         console.log('[AppContext] 持久信令连接断开，5 秒后重连...');
         // 清除心跳定时器
         if (heartbeatTimer) {
@@ -1320,8 +1338,15 @@ export function useAppActions() {
   const { dispatch } = useApp();
 
   return {
-    login: useCallback((user?: AuthUser, deviceInfo?: { ip: string; device: string; location: string; time: string }) => dispatch({ type: 'LOGIN', user, deviceInfo }), [dispatch]),
-    logout: useCallback(() => dispatch({ type: 'LOGOUT' }), [dispatch]),
+    login: useCallback((user?: AuthUser, deviceInfo?: { ip: string; device: string; location: string; time: string }) => {
+      setTelemetryUser(user?.id || localStorage.getItem('user_id') || undefined);
+      dispatch({ type: 'LOGIN', user, deviceInfo });
+    }, [dispatch]),
+    logout: useCallback(() => {
+      const ownerId = typeof localStorage !== 'undefined' ? localStorage.getItem('user_id') || CURRENT_USER.id : CURRENT_USER.id;
+      void clearDecryptedMessageCache(ownerId).catch((err) => console.warn('[AppContext] 登出清理本地解密缓存失败:', err));
+      dispatch({ type: 'LOGOUT' });
+    }, [dispatch]),
     setTab: useCallback((tab: string) => dispatch({ type: 'SET_TAB', tab }), [dispatch]),
     openChat: useCallback((chatId: string) => dispatch({ type: 'OPEN_CHAT', chatId }), [dispatch]),
     closeChat: useCallback(() => dispatch({ type: 'CLOSE_CHAT' }), [dispatch]),
@@ -1389,5 +1414,7 @@ export function useAppActions() {
       dispatch({ type: 'UPSERT_CHAT', chat }), [dispatch]),
     replaceMessageId: useCallback((chatId: string, tempId: string, realId: string) =>
       dispatch({ type: 'REPLACE_MESSAGE_ID', chatId, tempId, realId }), [dispatch]),
+    updateMessageStatus: useCallback((chatId: string, messageId: string, status: Message['status']) =>
+      dispatch({ type: 'UPDATE_MESSAGE_STATUS', chatId, messageId, status }), [dispatch]),
   };
 }

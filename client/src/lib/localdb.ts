@@ -14,6 +14,8 @@ export interface GroupMessageLike {
   timestamp: number;
   isRevoked?: boolean;
   status?: 'sending' | 'sent' | 'delivered' | 'failed';
+  direction?: 'inbound' | 'outbound';
+  decryptionStatus?: 'decrypted' | 'ciphertext' | 'failed' | 'legacy';
 }
 
 type ChatDoc = Chat & {
@@ -22,6 +24,9 @@ type ChatDoc = Chat & {
 };
 
 type PrivateMessageDoc = Message & {
+  ownerId: string;
+  direction: 'inbound' | 'outbound';
+  decryptionStatus: 'decrypted' | 'ciphertext' | 'failed' | 'legacy';
   reactionsJson: string;
   mentionsJson?: string;
   voiceWaveformJson?: string;
@@ -30,6 +35,9 @@ type PrivateMessageDoc = Message & {
 };
 
 type GroupMessageDoc = GroupMessageLike & {
+  ownerId: string;
+  direction: 'inbound' | 'outbound';
+  decryptionStatus: 'decrypted' | 'ciphertext' | 'failed' | 'legacy';
   groupId: string;
   extraJson?: string;
 };
@@ -73,19 +81,32 @@ const chatSchema: any = {
 
 const privateMessageSchema: any = {
   title: 'cqim private message schema',
-  version: 0,
+  version: 1,
+  migrationStrategies: {
+    1: (oldDoc: any) => ({
+      ...oldDoc,
+      ownerId: oldDoc.ownerId || 'legacy',
+      direction: oldDoc.direction || 'inbound',
+      decryptionStatus: oldDoc.decryptionStatus || (oldDoc.isEncrypted ? 'decrypted' : 'legacy'),
+    }),
+  },
   primaryKey: 'id',
   type: 'object',
   additionalProperties: true,
-  indexes: ['chatId', 'timestamp', ['chatId', 'timestamp']],
+  indexes: ['ownerId', 'chatId', 'timestamp', ['ownerId', 'chatId', 'timestamp']],
   required: ['id', 'chatId', 'senderId', 'content', 'type', 'timestamp', 'isEncrypted', 'status', 'reactionsJson'],
   properties: {
     id: { type: 'string', maxLength: 128 },
+    ownerId: { type: 'string', maxLength: 128 },
     chatId: { type: 'string', maxLength: 128 },
     senderId: { type: 'string', maxLength: 128 },
     content: { type: 'string' },
     type: { type: 'string' },
     timestamp: { type: 'number', minimum: 0, maximum: 9999999999999 },
+    seq: { type: 'number' },
+    cursor: { type: 'string' },
+    direction: { type: 'string' },
+    decryptionStatus: { type: 'string' },
     isEncrypted: { type: 'boolean' },
     status: { type: 'string' },
     replyTo: { type: 'string' },
@@ -123,14 +144,23 @@ const privateMessageSchema: any = {
 
 const groupMessageSchema: any = {
   title: 'cqim group message schema',
-  version: 0,
+  version: 1,
+  migrationStrategies: {
+    1: (oldDoc: any) => ({
+      ...oldDoc,
+      ownerId: oldDoc.ownerId || 'legacy',
+      direction: oldDoc.direction || 'inbound',
+      decryptionStatus: oldDoc.decryptionStatus || (oldDoc.msgType === 'mls_encrypted' ? 'decrypted' : 'legacy'),
+    }),
+  },
   primaryKey: 'id',
   type: 'object',
   additionalProperties: true,
-  indexes: ['groupId', 'seq', ['groupId', 'seq']],
+  indexes: ['ownerId', 'groupId', 'seq', ['ownerId', 'groupId', 'seq']],
   required: ['id', 'groupId', 'seq', 'senderId', 'msgType', 'content', 'timestamp'],
   properties: {
     id: { type: 'string', maxLength: 128 },
+    ownerId: { type: 'string', maxLength: 128 },
     groupId: { type: 'string', maxLength: 128 },
     seq: { type: 'number', minimum: 0, maximum: 9999999999999 },
     senderId: { type: 'string', maxLength: 128 },
@@ -140,6 +170,8 @@ const groupMessageSchema: any = {
     replyToId: { type: 'string' },
     extraJson: { type: 'string' },
     timestamp: { type: 'number', minimum: 0, maximum: 9999999999999 },
+    direction: { type: 'string' },
+    decryptionStatus: { type: 'string' },
     isRevoked: { type: 'boolean' },
     status: { type: 'string' },
   },
@@ -204,9 +236,12 @@ function denormalizeChat(doc: ChatDoc): Chat {
   };
 }
 
-function normalizePrivateMessage(message: Message): PrivateMessageDoc {
+function normalizePrivateMessage(message: Message, ownerId: string): PrivateMessageDoc {
   return {
     ...message,
+    ownerId,
+    direction: message.direction || (message.senderId === ownerId ? 'outbound' : 'inbound'),
+    decryptionStatus: message.decryptionStatus || (message.isEncrypted ? 'decrypted' : 'legacy'),
     timestamp: Number(message.timestamp || Date.now()),
     reactionsJson: JSON.stringify(message.reactions || {}),
     mentionsJson: message.mentions ? JSON.stringify(message.mentions) : undefined,
@@ -220,6 +255,10 @@ function denormalizePrivateMessage(doc: PrivateMessageDoc): Message {
   return {
     ...doc,
     timestamp: Number(doc.timestamp || 0),
+    seq: doc.seq,
+    cursor: doc.cursor,
+    direction: doc.direction,
+    decryptionStatus: doc.decryptionStatus,
     reactions: parseJson<Record<string, number>>(doc.reactionsJson, {}),
     mentions: parseJson<string[] | undefined>(doc.mentionsJson, undefined),
     voiceWaveform: parseJson<number[] | undefined>(doc.voiceWaveformJson, undefined),
@@ -228,9 +267,12 @@ function denormalizePrivateMessage(doc: PrivateMessageDoc): Message {
   };
 }
 
-function normalizeGroupMessage(groupId: string, message: GroupMessageLike): GroupMessageDoc {
+function normalizeGroupMessage(ownerId: string, groupId: string, message: GroupMessageLike): GroupMessageDoc {
   return {
     ...message,
+    ownerId,
+    direction: message.direction || (message.senderId === ownerId ? 'outbound' : 'inbound'),
+    decryptionStatus: message.decryptionStatus || (message.msgType === 'mls_encrypted' ? 'decrypted' : 'legacy'),
     groupId,
     timestamp: Number(message.timestamp || Date.now()),
     extraJson: message.extra === undefined ? undefined : JSON.stringify(message.extra),
@@ -241,6 +283,8 @@ function denormalizeGroupMessage(doc: GroupMessageDoc): GroupMessageLike {
   return {
     id: doc.id,
     seq: Number(doc.seq || 0),
+    direction: doc.direction,
+    decryptionStatus: doc.decryptionStatus,
     senderId: doc.senderId,
     senderName: doc.senderName,
     msgType: doc.msgType,
@@ -269,18 +313,26 @@ export async function persistChats(chats: Chat[]) {
   }
 }
 
-export async function persistPrivateMessages(messages: Message[]) {
+const MAX_MESSAGES_PER_CONVERSATION = 500;
+
+export async function persistPrivateMessages(messages: Message[], ownerId = 'legacy') {
   const db = await getDb();
+  const byChat = new Map<string, Message[]>();
   for (const message of messages) {
-    await db.privateMessages.upsert(normalizePrivateMessage(message));
+    await db.privateMessages.upsert(normalizePrivateMessage(message, ownerId));
+    const list = byChat.get(message.chatId) || [];
+    list.push(message);
+    byChat.set(message.chatId, list);
   }
+  await Promise.all(Array.from(byChat.keys()).map(chatId => trimPrivateMessages(chatId, ownerId)));
 }
 
-export async function persistGroupMessages(groupId: string, messages: GroupMessageLike[]) {
+export async function persistGroupMessages(groupId: string, messages: GroupMessageLike[], ownerId = 'legacy') {
   const db = await getDb();
   for (const message of messages) {
-    await db.groupMessages.upsert(normalizeGroupMessage(groupId, message));
+    await db.groupMessages.upsert(normalizeGroupMessage(ownerId, groupId, message));
   }
+  await trimGroupMessages(groupId, ownerId);
 }
 
 export async function loadChatsFromLocalDb() {
@@ -291,17 +343,17 @@ export async function loadChatsFromLocalDb() {
     .sort((a: Chat, b: Chat) => Number(b.lastMessageTime || 0) - Number(a.lastMessageTime || 0));
 }
 
-export async function loadPrivateMessagesFromLocalDb(chatId: string) {
+export async function loadPrivateMessagesFromLocalDb(chatId: string, ownerId = 'legacy') {
   const db = await getDb();
-  const docs = await db.privateMessages.find({ selector: { chatId } }).exec();
+  const docs = await db.privateMessages.find({ selector: { chatId, ownerId } }).exec();
   return docs
     .map((doc: any) => denormalizePrivateMessage(doc.toJSON() as PrivateMessageDoc))
     .sort((a: Message, b: Message) => a.timestamp - b.timestamp);
 }
 
-export async function loadGroupMessagesFromLocalDb(groupId: string) {
+export async function loadGroupMessagesFromLocalDb(groupId: string, ownerId = 'legacy') {
   const db = await getDb();
-  const docs = await db.groupMessages.find({ selector: { groupId } }).exec();
+  const docs = await db.groupMessages.find({ selector: { groupId, ownerId } }).exec();
   return docs
     .map((doc: any) => denormalizeGroupMessage(doc.toJSON() as GroupMessageDoc))
     .sort((a: GroupMessageLike, b: GroupMessageLike) => a.seq - b.seq);
@@ -316,6 +368,45 @@ export async function loadSyncState(id: string) {
   const db = await getDb();
   const doc = await db.syncStates.findOne(id).exec();
   return doc?.toJSON() as SyncStateDoc | null;
+}
+
+async function trimPrivateMessages(chatId: string, ownerId: string) {
+  const db = await getDb();
+  const docs = await db.privateMessages.find({ selector: { chatId, ownerId } }).exec();
+  const stale = docs
+    .map((doc: any) => doc.toJSON() as PrivateMessageDoc)
+    .sort((a: PrivateMessageDoc, b: PrivateMessageDoc) => Number(b.timestamp || 0) - Number(a.timestamp || 0))
+    .slice(MAX_MESSAGES_PER_CONVERSATION);
+  await Promise.all(stale.map((doc: PrivateMessageDoc) => db.privateMessages.findOne(doc.id).remove()));
+}
+
+async function trimGroupMessages(groupId: string, ownerId: string) {
+  const db = await getDb();
+  const docs = await db.groupMessages.find({ selector: { groupId, ownerId } }).exec();
+  const stale = docs
+    .map((doc: any) => doc.toJSON() as GroupMessageDoc)
+    .sort((a: GroupMessageDoc, b: GroupMessageDoc) => Number(b.seq || 0) - Number(a.seq || 0))
+    .slice(MAX_MESSAGES_PER_CONVERSATION);
+  await Promise.all(stale.map((doc: GroupMessageDoc) => db.groupMessages.findOne(doc.id).remove()));
+}
+
+export async function clearConversationLocalData(conversationId: string, ownerId: string) {
+  const db = await getDb();
+  await Promise.all([
+    db.privateMessages.find({ selector: { chatId: conversationId, ownerId } }).remove(),
+    db.groupMessages.find({ selector: { groupId: conversationId, ownerId } }).remove(),
+    db.syncStates.find({ selector: { ownerId, id: { $regex: conversationId } } }).remove(),
+  ]);
+}
+
+export async function clearDecryptedMessageCache(ownerId?: string) {
+  const db = await getDb();
+  const selector = ownerId ? { ownerId } : {};
+  await Promise.all([
+    db.privateMessages.find({ selector }).remove(),
+    db.groupMessages.find({ selector }).remove(),
+    db.syncStates.find({ selector }).remove(),
+  ]);
 }
 
 export async function clearLocalMessagingData() {

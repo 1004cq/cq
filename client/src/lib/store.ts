@@ -74,9 +74,16 @@ export interface Message {
   content: string;
   type: 'text' | 'image' | 'video' | 'file' | 'voice' | 'system' | 'call' | 'location' | 'location_share' | 'sticker';
   timestamp: number;
+  /** 服务端顺序号或游标（私聊可为空，群聊使用 seq） */
+  seq?: number;
+  cursor?: string;
+  /** 本地缓存方向，不参与服务器协议 */
+  direction?: 'inbound' | 'outbound';
+  /** 解密缓存状态，不记录到服务器 */
+  decryptionStatus?: 'decrypted' | 'ciphertext' | 'failed' | 'legacy';
   isEncrypted: boolean;
   reactions: Record<string, number>;
-  status: 'sending' | 'sent' | 'delivered' | 'read';
+  status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   replyTo?: string;
   imageUrl?: string;
   /** 视频消息 URL */

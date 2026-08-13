@@ -7,6 +7,7 @@
 
 import React, { createContext, useContext, useCallback, useRef, useEffect, useReducer, type ReactNode } from 'react';
 import { loadGroupMessagesFromLocalDb, persistGroupMessages } from '@/lib/localdb';
+import { trackEvent } from '@/lib/telemetry';
 
 // ============ 类型定义 ============
 
@@ -337,6 +338,7 @@ export function GroupMessageProvider({ children, userId }: { children: ReactNode
 
       ws.onclose = () => {
         dispatch({ type: 'SET_WS_CONNECTED', connected: false });
+        trackEvent('ws_reconnect', { groupId: userId, code: 'group_socket_closed' });
         console.log('[GroupMsgCtx] WebSocket 断开，5秒后重连...');
         reconnectTimer = setTimeout(connect, 5000);
       };
@@ -362,7 +364,7 @@ export function GroupMessageProvider({ children, userId }: { children: ReactNode
     void Promise.all(
       entries
         .filter(([, groupState]) => groupState.messages.length > 0)
-        .map(([groupId, groupState]) => persistGroupMessages(groupId, groupState.messages))
+        .map(([groupId, groupState]) => persistGroupMessages(groupId, groupState.messages, userId))
     ).catch((err) => console.error('[GroupMsgCtx] 本地群消息持久化失败:', err));
   }, [state.groups]);
 
@@ -370,11 +372,13 @@ export function GroupMessageProvider({ children, userId }: { children: ReactNode
 
   const loadGroupMessages = useCallback(async (groupId: string) => {
     dispatch({ type: 'SET_LOADING', groupId, loading: true });
+    let localLatestSeq = 0;
 
     try {
-      const localMessages = await loadGroupMessagesFromLocalDb(groupId) as GroupMessageItem[];
+      const localMessages = await loadGroupMessagesFromLocalDb(groupId, userId) as GroupMessageItem[];
+      localLatestSeq = Math.max(...localMessages.map((m: GroupMessageItem) => m.seq), 0);
       if (localMessages.length > 0) {
-        const latestSeq = Math.max(...localMessages.map((m: GroupMessageItem) => m.seq), 0);
+        const latestSeq = localLatestSeq;
         dispatch({
           type: 'SET_MESSAGES',
           groupId,
@@ -389,7 +393,9 @@ export function GroupMessageProvider({ children, userId }: { children: ReactNode
     }
 
     try {
+      const cachedLatestSeq = Math.max(localLatestSeq, stateRef.current.groups[groupId]?.latestSeq || 0);
       const params = new URLSearchParams({ groupId, userId, limit: '50' });
+      if (cachedLatestSeq > 0) params.set('afterSeq', String(cachedLatestSeq));
       const resp = await fetch(`/api/group/messages?${params}`);
       if (!resp.ok) throw new Error('加载失败');
       const data = await resp.json();
@@ -400,13 +406,19 @@ export function GroupMessageProvider({ children, userId }: { children: ReactNode
         status: 'delivered' as const,
       }));
 
-      dispatch({
-        type: 'SET_MESSAGES',
-        groupId,
-        messages: msgs,
-        hasMore: data.hasMore,
-        latestSeq: data.latestSeq,
-      });
+      const hasCached = localMessages.length > 0 || (stateRef.current.groups[groupId]?.messages.length || 0) > 0;
+      if (cachedLatestSeq > 0 && hasCached) {
+        dispatch({ type: 'APPEND_MESSAGES', groupId, messages: msgs });
+        dispatch({ type: 'SET_LOADING', groupId, loading: false });
+      } else {
+        dispatch({
+          type: 'SET_MESSAGES',
+          groupId,
+          messages: msgs,
+          hasMore: data.hasMore,
+          latestSeq: data.latestSeq,
+        });
+      }
     } catch (err) {
       console.error('[GroupMsgCtx] 加载消息失败:', err);
       dispatch({ type: 'SET_LOADING', groupId, loading: false });
@@ -454,7 +466,10 @@ export function GroupMessageProvider({ children, userId }: { children: ReactNode
 
   const sendGroupMessage = useCallback((groupId: string, content: string, msgType = 'text', extra?: any) => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      trackEvent('message_send_failed', { groupId, msgType, code: 'group_ws_not_open', direction: 'outbound' });
+      return;
+    }
 
     const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg: GroupMessageItem = {
